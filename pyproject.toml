@@ -1,0 +1,27 @@
+[project]
+name = "pv-disp-resol-dispute-resolution-service"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "alembic==1.15.2",
+    "asyncpg==0.30.0",
+    "bcrypt==4.3.0",
+    "celery==5.5.2",
+    "fastapi==0.115.12",
+    "google-genai>=1.65.0",
+    "groq==0.22.0",
+    "langchain-core==0.3.55",
+    "langgraph==0.3.34",
+    "pgvector==0.3.6",
+    "pydantic==2.11.4",
+    "pydantic-settings==2.9.1",
+    "pyjwt==2.10.1",
+    "pypdf==5.4.0",
+    "python-multipart==0.0.20",
+    "redis==5.2.1",
+    "reportlab>=4.4.10",
+    "sqlalchemy==2.0.40",
+    "uvicorn[standard]==0.34.2",
+]
