@@ -1,6 +1,6 @@
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, and_
+from sqlalchemy import func, select, update, and_
 from sqlalchemy.orm import selectinload
 
 from .base import BaseRepository
@@ -253,7 +253,29 @@ class DisputeAssignmentRepository(BaseRepository[DisputeAssignment]):
     def __init__(self, db: AsyncSession):
         super().__init__(DisputeAssignment, db)
 
+        async def has_active_assignment(self, dispute_id: int) -> bool:
+            """
+            Check if a dispute already has an active assignment.
+            Returns True if at least one ACTIVE assignment exists.
+            """
+            stmt = (
+                select(func.count(DisputeAssignment.assignment_id))
+                .where(
+                    and_(
+                        DisputeAssignment.dispute_id == dispute_id,
+                        DisputeAssignment.status == "ACTIVE",
+                    )
+                )
+            )
+            result = await self.db.execute(stmt)
+            count = result.scalar_one()
+            return count > 0
+
     async def get_active_assignment(self, dispute_id: int) -> Optional[DisputeAssignment]:
+        """
+        Get the most recent active assignment for a dispute.
+        If multiple exist (data integrity issue), returns the most recent one.
+        """
         stmt = (
             select(DisputeAssignment)
             .options(selectinload(DisputeAssignment.assignee))
@@ -263,6 +285,8 @@ class DisputeAssignmentRepository(BaseRepository[DisputeAssignment]):
                     DisputeAssignment.status == "ACTIVE",
                 )
             )
+            .order_by(DisputeAssignment.assigned_at.desc())  # ← Most recent first
+            .limit(1)  # ← Only return one
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
