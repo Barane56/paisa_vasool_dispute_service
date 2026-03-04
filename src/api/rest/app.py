@@ -84,12 +84,14 @@ def create_app() -> FastAPI:
     from src.api.rest.routes.emails import router as email_router
     from src.api.rest.routes.disputes import router as dispute_router
     from src.api.rest.routes.invoices import router as invoice_router
+    from src.api.rest.routes.payments import router as payment_router
     from src.api.rest.routes.dispute_types import router as dtype_router
 
     app.include_router(health_router)
     app.include_router(email_router,   prefix="/api/v1")
     app.include_router(dispute_router, prefix="/api/v1")
     app.include_router(invoice_router, prefix="/api/v1")
+    app.include_router(payment_router, prefix="/api/v1")
     app.include_router(dtype_router,   prefix="/api/v1")
 
     return app

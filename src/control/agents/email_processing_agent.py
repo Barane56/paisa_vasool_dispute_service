@@ -12,7 +12,7 @@ Pipeline:
       ↓
   classify_email                  ← DISPUTE | CLARIFICATION | UNKNOWN (ENHANCED: dynamic dispute types from DB)
       ↓
-  generate_ai_response            ← tries to auto-respond
+  generate_ai_response            ← tries to auto-respond (UPDATED: conservative auto-response logic)
       ↓
   persist_results                 ← saves everything to DB (ENHANCED: creates new dispute types if needed)
 """
@@ -201,7 +201,7 @@ async def node_identify_invoice(
         domain = sender.split("@")[-1].split(".")[0] if "@" in sender else sender
         customer_id = domain
 
-    # Try to find matching payment - ENHANCED: This ensures payment_detail gets joined
+    # Try to find matching payment
     if matched_invoice and customer_id:
         matched_payment = await pay_repo.get_by_customer_and_invoice(
             customer_id, matched_invoice.invoice_number
@@ -259,12 +259,11 @@ async def node_fetch_context(
             payment_details = payment.payment_details
 
     # ENHANCED: Existing open disputes for customer + invoice
-    # Now uses memory episodes to better understand dispute history
     if state["customer_id"] and state["matched_invoice_id"]:
         dispute_repo = DisputeRepository(db_session)
         open_disputes = await dispute_repo.get_by_customer(state["customer_id"])
         matching = [d for d in open_disputes if d.invoice_id == state["matched_invoice_id"]]
-        
+
         if matching:
             existing_dispute = matching[0]
             existing_dispute_id = existing_dispute.dispute_id
@@ -319,6 +318,7 @@ async def node_classify_email(
     ENHANCED: Now dynamically fetches dispute types from DB and sends to LLM.
     LLM can suggest new dispute types if none match.
     """
+    
     if not llm_client:
         text_lower = state["all_text"].lower()
         dispute_keywords = ["wrong", "incorrect", "mismatch", "overcharged", "dispute", "error", "short payment"]
@@ -339,7 +339,6 @@ async def node_classify_email(
 
     # Build available dispute types list
     available_types = state.get("available_dispute_types", [])
-    types_list = [dt["reason_name"] for dt in available_types]
     types_details = "\n".join([
         f"  - {dt['reason_name']}: {dt['description']} (severity: {dt['severity_level']})"
         for dt in available_types
@@ -381,8 +380,7 @@ If the issue doesn't match any existing dispute type, create a meaningful new ty
     try:
         response = await llm_client.chat(prompt)
         data = json.loads(response)
-        
-        # Store the classification result including new type flag
+
         result = {
             **state,
             "classification": data.get("classification", "CLARIFICATION"),
@@ -391,8 +389,7 @@ If the issue doesn't match any existing dispute type, create a meaningful new ty
             "description": data.get("description", state["body_text"][:500]),
             "_answers_pending_questions": data.get("answers_pending_questions", []),
         }
-        
-        # Add metadata for new dispute type creation
+
         if data.get("is_new_type"):
             result["_new_dispute_type"] = {
                 "reason_name": data.get("dispute_type_name"),
@@ -400,9 +397,9 @@ If the issue doesn't match any existing dispute type, create a meaningful new ty
                 "severity_level": data.get("priority", "MEDIUM"),
             }
             logger.info(f"[email_id={state['email_id']}] LLM suggested new dispute type: {data.get('dispute_type_name')}")
-        
+
         return result
-        
+
     except Exception as e:
         logger.error(f"Classification LLM error: {e}")
         return {
@@ -437,7 +434,9 @@ async def node_generate_ai_response(
     recent_eps = state.get("recent_episodes", [])
     pending_qs = state.get("pending_questions", [])
 
-    prompt = f"""You are an AR dispute resolution AI assistant. Generate a professional response.
+    # ── UPDATED PROMPT ────────────────────────────────────────────────────────
+    prompt = f"""You are an AR dispute resolution AI assistant. Your job is to analyze customer \
+emails and decide whether to auto-respond or escalate to the finance/AR team.
 
 CUSTOMER EMAIL:
 Subject: {state['subject']}
@@ -464,31 +463,142 @@ CLASSIFICATION:
 - Category: {state.get('dispute_type_name')}
 - Priority: {state.get('priority')}
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRITICAL DECISION RULE — READ CAREFULLY:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You must be VERY conservative about auto-responding. Even if you have all the data
+in context, DO NOT auto-respond if the query touches any of the following:
+
+❌ NEVER auto-respond (set can_auto_respond=false) when the email involves:
+  - Any disputed amount, short payment, overpayment, or refund request
+  - Any request to adjust, credit, or waive a charge (even partially)
+  - Payment deadline extensions or changes to agreed payment terms
+  - Penalty, interest, or late fee disputes
+  - Contract terms or pricing agreement disputes
+  - Any scenario where acting on the response could result in financial loss or liability
+  - Multi-invoice disputes or bulk adjustments
+  - Any email classified as HIGH priority
+  - Legal language, escalation threats, or mentions of legal action
+  - Cases where the customer states a different amount than what is on record
+  - Any ambiguity about whether a payment was received or applied correctly
+
+✅ ONLY auto-respond (can_auto_respond=true) for purely factual / informational queries:
+  - "What is the tax rate applied on this invoice?" → answer from invoice data only
+  - "What discount was applied on invoice X?" → answer from invoice data only
+  - "What are your accepted payment methods?" → standard factual info
+  - "Can you resend the invoice?" → acknowledgement only, no financial details
+  - "What is the due date on invoice X?" → factual date from record
+  - "Who is the account manager for our account?" → factual contact info from record
+  - Simple acknowledgements where NO financial commitment or decision is being made
+
+When in doubt → set can_auto_respond=false. It is always safer to escalate.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RESPONSE DRAFTING RULES:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If can_auto_respond=true (safe, informational only):
+  - Answer the specific factual question using ONLY data present in INVOICE CONTEXT
+    or PAYMENT CONTEXT above — do not invent or infer values
+  - Be concise and professional
+  - Do NOT make promises, adjustments, or commitments of any kind
+  - Close with: "If you have any further questions, please don't hesitate to reach out."
+
+If can_auto_respond=false (sensitive / financial / dispute / uncertain):
+  - Draft a polite acknowledgement ONLY — do NOT attempt to resolve, answer, or
+    comment on the dispute details in the response
+  - Use a structure similar to this (adapt wording naturally to context):
+
+      "Thank you for reaching out regarding [brief neutral topic description].
+      We have received your query and our finance/AR team will carefully review
+      the details and get back to you shortly. If you have any additional
+      information or supporting documents related to this matter, please feel
+      free to share them. We appreciate your patience."
+
+  - NEVER include amounts, dates, percentages, or any financial figures in this
+    acknowledgement response — even if you can see them in context
+  - In questions_to_ask, list the specific questions the FA team will need to
+    investigate to resolve this (these are for internal use, NOT sent to customer)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CUSTOMER-FACING CLARIFICATION QUESTIONS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Sometimes the customer's email is missing information we genuinely need before
+the FA team can even begin to investigate. In those cases ONLY, you may append
+1-2 short, polite clarifying questions at the end of the acknowledgement response.
+
+Rules for including customer-facing questions:
+  ✅ Include a question ONLY if the answer is not already present anywhere in the
+     email, attachments, invoice context, or conversation history
+  ✅ Ask only for factual reference data — e.g. a missing PO number, payment
+     reference, remittance advice, or date of payment
+  ✅ Maximum 2 questions — pick only the most essential ones
+  ✅ Frame them gently, e.g. "To help us investigate promptly, could you also
+     share [X]?"
+
+  ❌ Do NOT ask questions if the customer has already provided sufficient detail
+  ❌ Do NOT ask questions whose answers are visible in INVOICE CONTEXT or PAYMENT CONTEXT
+  ❌ Do NOT ask questions about amounts, rates, or contract terms — those are for
+     the FA team to verify internally, not the customer to justify
+  ❌ Do NOT add questions just for the sake of it — no questions is perfectly fine
+     when the email is already detailed enough
+
+Example of a well-formed acknowledgement with a question:
+  "Thank you for reaching out regarding your invoice query. We have received your
+  request and our finance/AR team will review the details and get back to you
+  shortly. To help us investigate promptly, could you share the RTGS/NEFT
+  transaction reference number for the payment made? We appreciate your patience."
+
+Example of a well-formed acknowledgement WITHOUT questions (customer gave full detail):
+  "Thank you for reaching out regarding your invoice query. We have received your
+  request and our finance/AR team will review the details and get back to you
+  shortly. We appreciate your patience."
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 Your task:
-1. Summarize the issue in 2-3 sentences
-2. If you can fully resolve it with available data → draft a response email
-3. If not → list questions needed (avoid duplicating pending questions)
-4. Note which memory episodes you referenced (by position, e.g. [0, 1])
+1. Determine if this is SAFE (informational) or SENSITIVE (financial/dispute/uncertain)
+2. Summarize the issue in 2-3 sentences
+3. Draft the appropriate response based on the category above
+4. Decide whether any critical reference information is missing from the customer's
+   email — if yes, include at most 2 gentle clarifying questions in the response
+5. For sensitive cases, list questions the FA team should investigate internally
+   (these go in questions_to_ask, never in the customer-facing ai_response)
+6. Note which memory episodes you referenced (by position index, e.g. [0, 1])
 
 Return ONLY valid JSON:
 {{
-  "ai_summary": "Brief summary of the issue",
-  "can_auto_respond": true/false,
-  "ai_response": "Draft response email if can_auto_respond=true, else null",
+  "ai_summary": "2-3 sentence summary of the issue",
+  "can_auto_respond": true or false,
+  "auto_respond_reason": "One sentence explaining the decision, e.g. 'Purely informational query about tax rate — safe to answer from invoice data' OR 'Customer is disputing the invoice amount — requires FA review'",
+  "ai_response": "The full draft response email text (required for BOTH true and false cases). For false cases this is the acknowledgement, optionally ending with 1-2 clarifying questions if critical info is missing.",
+  "customer_questions_included": true or false,
   "confidence_score": 0.0-1.0,
-  "questions_to_ask": ["question1", "question2"],
+  "questions_to_ask": ["FA investigation question 1", "FA investigation question 2"],
   "episodes_referenced": [0, 1],
-  "memory_context_used": true/false
+  "memory_context_used": true or false
 }}"""
+    # ── END UPDATED PROMPT ────────────────────────────────────────────────────
 
     try:
         response = await llm_client.chat(prompt)
         data = json.loads(response)
 
+        # Log the auto-respond decision reason for auditability
+        logger.info(
+            f"[email_id={state['email_id']}] Auto-respond decision: "
+            f"can_auto_respond={data.get('can_auto_respond')} | "
+            f"customer_questions_included={data.get('customer_questions_included', False)} | "
+            f"reason={data.get('auto_respond_reason', 'N/A')}"
+        )
+
         return {
             **state,
             "ai_summary": data.get("ai_summary", state.get("description", "")),
-            "ai_response": data.get("ai_response") if data.get("can_auto_respond") else None,
+            # ai_response is now always populated (acknowledgement or full answer)
+            "ai_response": data.get("ai_response"),
             "confidence_score": data.get("confidence_score", 0.7),
             "auto_response_generated": bool(data.get("can_auto_respond")),
             "questions_to_ask": data.get("questions_to_ask", []),
@@ -518,7 +628,7 @@ async def node_persist_results(
     """
     if not db_session:
         return state
- 
+
     from src.data.repositories.repositories import (
         DisputeTypeRepository, DisputeRepository, EmailRepository,
         MemoryEpisodeRepository, OpenQuestionRepository, UserRepository,
@@ -535,12 +645,10 @@ async def node_persist_results(
         # 1. Resolve or create dispute type (ENHANCED)
         dtype_repo = DisputeTypeRepository(db_session)
         dispute_type = await dtype_repo.get_by_name(state["dispute_type_name"])
-        
+
         if not dispute_type:
-            # Check if LLM suggested a new type
             new_type_data = state.get("_new_dispute_type")
             if new_type_data:
-                # Create the new dispute type
                 dispute_type = DisputeType(
                     reason_name=new_type_data["reason_name"],
                     description=new_type_data.get("description", ""),
@@ -551,10 +659,8 @@ async def node_persist_results(
                 await db_session.flush()
                 logger.info(f"[email_id={state['email_id']}] Created new dispute type: {dispute_type.reason_name}")
             else:
-                # Fallback to General Clarification
                 dispute_type = await dtype_repo.get_by_name("General Clarification")
                 if not dispute_type:
-                    # Create General Clarification if it doesn't exist
                     dispute_type = DisputeType(
                         reason_name="General Clarification",
                         description="General inquiries and clarification requests",
@@ -566,12 +672,12 @@ async def node_persist_results(
 
         dispute_id = state.get("existing_dispute_id")
 
-        # 2. Create or reuse dispute (ENHANCED: ensures payment_detail_id is set)
+        # 2. Create or reuse dispute
         if not dispute_id:
             dispute = DisputeMaster(
                 email_id=state["email_id"],
                 invoice_id=state.get("matched_invoice_id"),
-                payment_detail_id=state.get("matched_payment_id"),  # VERIFIED: Payment detail joins here
+                payment_detail_id=state.get("matched_payment_id"),
                 customer_id=state["customer_id"] or "unknown",
                 dispute_type_id=dispute_type.dispute_type_id,
                 status="OPEN",
@@ -583,12 +689,11 @@ async def node_persist_results(
             dispute_id = dispute.dispute_id
             logger.info(f"[email_id={state['email_id']}] Created new dispute_id={dispute_id} with payment_detail_id={state.get('matched_payment_id')}")
         else:
-            # For existing disputes, ensure payment_detail is updated if it wasn't set before
             dispute = await DisputeRepository(db_session).get_by_id(dispute_id)
             if dispute and not dispute.payment_detail_id and state.get("matched_payment_id"):
                 dispute.payment_detail_id = state.get("matched_payment_id")
                 logger.info(f"[email_id={state['email_id']}] Updated existing dispute_id={dispute_id} with payment_detail_id={state.get('matched_payment_id')}")
-            
+
             log = DisputeActivityLog(
                 dispute_id=dispute_id,
                 action_type="FOLLOW_UP_EMAIL_RECEIVED",
@@ -622,10 +727,13 @@ async def node_persist_results(
         await db_session.flush()
 
         # 5. Memory episode – AI response (if any)
+        # NOTE: ai_response is now always set (acknowledgement or full answer).
+        # We only create the AI episode and mark auto_response_generated=True
+        # when the LLM decided it was safe to fully answer (can_auto_respond=True).
         if state.get("ai_response"):
             ai_episode = DisputeMemoryEpisode(
                 dispute_id=dispute_id,
-                episode_type="AI_RESPONSE",
+                episode_type="AI_RESPONSE" if state.get("auto_response_generated") else "AI_ACKNOWLEDGEMENT",
                 actor="AI",
                 content_text=state["ai_response"],
                 email_id=state["email_id"],
@@ -633,18 +741,19 @@ async def node_persist_results(
             db_session.add(ai_episode)
             await db_session.flush()
 
-            # Mark answered questions
-            answered_ids = state.get("_answers_pending_questions", [])
-            if answered_ids:
-                q_repo = OpenQuestionRepository(db_session)
-                for qid in answered_ids:
-                    q = await q_repo.get_by_id(qid)
-                    if q and q.status == "PENDING":
-                        q.status = "ANSWERED"
-                        q.answered_in_episode_id = ai_episode.episode_id
-                        q.answered_at = datetime.now(timezone.utc)
+            # Only mark questions answered if we actually auto-responded
+            if state.get("auto_response_generated"):
+                answered_ids = state.get("_answers_pending_questions", [])
+                if answered_ids:
+                    q_repo = OpenQuestionRepository(db_session)
+                    for qid in answered_ids:
+                        q = await q_repo.get_by_id(qid)
+                        if q and q.status == "PENDING":
+                            q.status = "ANSWERED"
+                            q.answered_in_episode_id = ai_episode.episode_id
+                            q.answered_at = datetime.now(timezone.utc)
 
-        # 6. Open questions
+        # 6. Open questions (FA investigation questions for sensitive cases)
         for question_text in state.get("questions_to_ask", []):
             question = DisputeOpenQuestion(
                 dispute_id=dispute_id,
@@ -668,7 +777,7 @@ async def node_persist_results(
         )
         await db_session.execute(stmt)
 
-        # 8. Auto-assign if not auto-responded
+        # 8. Auto-assign to FA team if not fully auto-responded
         if not state.get("auto_response_generated"):
             user_repo = UserRepository(db_session)
             all_users = await user_repo.get_all(limit=10)
@@ -711,22 +820,22 @@ def build_email_processing_graph(db_session=None, llm_client=None):
 
     graph = StateGraph(EmailProcessingState)
 
-    graph.add_node("extract_text",                node_extract_text)
-    graph.add_node("extract_invoice_data_via_groq", partial(node_extract_invoice_data_via_groq, llm_client=llm_client))
-    graph.add_node("identify_invoice",             partial(node_identify_invoice,        db_session=db_session))
-    graph.add_node("fetch_context",                partial(node_fetch_context,            db_session=db_session))
-    graph.add_node("classify_email",               partial(node_classify_email,           llm_client=llm_client))
-    graph.add_node("generate_ai_response",         partial(node_generate_ai_response,     llm_client=llm_client))
-    graph.add_node("persist_results",              partial(node_persist_results,          db_session=db_session))
+    graph.add_node("extract_text",                  node_extract_text)
+    graph.add_node("extract_invoice_data_via_groq",  partial(node_extract_invoice_data_via_groq, llm_client=llm_client))
+    graph.add_node("identify_invoice",               partial(node_identify_invoice,               db_session=db_session))
+    graph.add_node("fetch_context",                  partial(node_fetch_context,                  db_session=db_session))
+    graph.add_node("classify_email",                 partial(node_classify_email,                 llm_client=llm_client))
+    graph.add_node("generate_ai_response",           partial(node_generate_ai_response,           llm_client=llm_client))
+    graph.add_node("persist_results",                partial(node_persist_results,                db_session=db_session))
 
     graph.set_entry_point("extract_text")
-    graph.add_edge("extract_text",                "extract_invoice_data_via_groq")
+    graph.add_edge("extract_text",                  "extract_invoice_data_via_groq")
     graph.add_edge("extract_invoice_data_via_groq", "identify_invoice")
-    graph.add_edge("identify_invoice",            "fetch_context")
-    graph.add_edge("fetch_context",               "classify_email")
-    graph.add_edge("classify_email",              "generate_ai_response")
-    graph.add_edge("generate_ai_response",        "persist_results")
-    graph.add_edge("persist_results",             END)
+    graph.add_edge("identify_invoice",              "fetch_context")
+    graph.add_edge("fetch_context",                 "classify_email")
+    graph.add_edge("classify_email",                "generate_ai_response")
+    graph.add_edge("generate_ai_response",          "persist_results")
+    graph.add_edge("persist_results",               END)
 
     return graph.compile()
 

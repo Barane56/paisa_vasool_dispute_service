@@ -215,3 +215,14 @@ class MemorySummaryResponse(BaseModel):
 class QuestionStatusUpdate(BaseModel):
     status: str  # ANSWERED or EXPIRED
     notes: Optional[str] = None
+
+
+# ── Payment Detail ────────────────────────────────────────────────────────────
+class PaymentDetailResponse(BaseModel):
+    payment_detail_id: int
+    customer_id: str
+    invoice_number: str
+    payment_url: str
+    payment_details: Optional[Any] = None
+
+    model_config = {"from_attributes": True}

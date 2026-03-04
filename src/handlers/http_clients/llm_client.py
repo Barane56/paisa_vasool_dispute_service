@@ -128,7 +128,7 @@ Return ONLY valid JSON with these exact keys (use null for missing fields):
             raise InvoiceExtractionError(str(e))
 
     # ------------------------------------------------------------------ #
-    # Summarization                                                        #
+    # Summarization                                                      #
     # ------------------------------------------------------------------ #
     async def summarize_episodes(self, episodes: list, existing_summary: str = None) -> str:
         context = ""
@@ -169,11 +169,15 @@ Return a plain text summary (NOT JSON).
         return None
 
 
-_llm_client: LLMClient | None = None
+import threading
 
+_llm_client: LLMClient | None = None
+_lock = threading.Lock()
 
 def get_llm_client() -> LLMClient:
     global _llm_client
     if _llm_client is None:
-        _llm_client = LLMClient()
+        with _lock:
+            if _llm_client is None:  # double-checked locking
+                _llm_client = LLMClient()
     return _llm_client
