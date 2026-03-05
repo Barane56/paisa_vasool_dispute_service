@@ -4,17 +4,29 @@ LangGraph-based email processing agent (Groq edition).
 Pipeline:
   extract_text
       ↓
-  extract_invoice_data_via_groq   ← NEW: Groq intelligently extracts all invoice fields
+  extract_invoice_data_via_groq   ← Groq intelligently extracts all invoice fields
       ↓
-  identify_invoice                ← matches extracted invoice_number against DB
+  identify_invoice                ← matches invoice_number against DB; fetches ALL payment records for that invoice
       ↓
-  fetch_context                   ← loads invoice + payment records + memory (ENHANCED: uses memory episodes for matching)
+  fetch_context                   ← loads invoice + ALL payments + memory episodes
       ↓
-  classify_email                  ← DISPUTE | CLARIFICATION | UNKNOWN (ENHANCED: dynamic dispute types from DB)
+  classify_email                  ← DISPUTE | CLARIFICATION | UNKNOWN (dynamic dispute types from DB)
       ↓
-  generate_ai_response            ← tries to auto-respond (UPDATED: conservative auto-response logic)
+  generate_ai_response            ← conservative auto-response logic with full supporting doc context
       ↓
-  persist_results                 ← saves everything to DB (ENHANCED: creates new dispute types if needed)
+  persist_results                 ← saves dispute/analysis to DB + auto-links invoice & payments
+                                    as AnalysisSupportingRefs (supporting documents) on the analysis
+
+Key design notes
+────────────────
+• Payment identification uses get_all_by_invoice_number (invoice-number match) rather than
+  a customer_id string match, which was fragile because the DB stores full company names
+  while the agent was deriving an email domain.  Invoice number is the reliable join key.
+• Supporting documents (invoice_data + payment_detail rows) are automatically registered
+  in analysis_supporting_refs after every analysis so the FA team can see exactly which
+  DB records back the AI's conclusions.
+• State carries matched_payment_ids: List[int] (all payments) instead of a single id.
+• The typo `return results` at the end of run_email_processing has been fixed to `return result`.
 """
 
 from __future__ import annotations
@@ -50,13 +62,13 @@ class EmailProcessingState(TypedDict):
     # DB-matched
     matched_invoice_id: Optional[int]
     matched_invoice_number: Optional[str]
-    matched_payment_id: Optional[int]
+    matched_payment_ids: List[int]        # ALL payment_detail_ids for the invoice
     customer_id: Optional[str]
     routing_confidence: float
 
     # Context
     invoice_details: Optional[Dict]
-    payment_details: Optional[Dict]
+    all_payment_details: List[Dict]       # ALL payment records for the invoice
     existing_dispute_id: Optional[int]
     memory_summary: Optional[str]
     recent_episodes: List[Dict]
@@ -164,6 +176,17 @@ async def node_extract_invoice_data_via_groq(
 async def node_identify_invoice(
     state: EmailProcessingState, db_session=None
 ) -> EmailProcessingState:
+    """
+    Matches the invoice against the DB using candidate invoice numbers.
+
+    Payment identification fix
+    ──────────────────────────
+    The previous approach called get_by_customer_and_invoice(customer_id, invoice_number)
+    where customer_id was derived from the sender's email domain (e.g. "techsoft").
+    The DB stores full company names ("TechSoft Solutions"), so that join almost never
+    matched.  Invoice number is the reliable anchor — once we have a confirmed invoice
+    match we simply fetch ALL payment_detail rows for that invoice number directly.
+    """
     if not db_session:
         return {**state, "matched_invoice_id": None, "routing_confidence": 0.0}
 
@@ -172,10 +195,9 @@ async def node_identify_invoice(
     pay_repo = PaymentRepository(db_session)
 
     matched_invoice = None
-    matched_payment = None
     confidence = 0.0
 
-    # Exact match
+    # 1. Exact match on every candidate
     for candidate in state["candidate_invoice_numbers"]:
         invoice = await inv_repo.get_by_invoice_number(candidate)
         if invoice:
@@ -183,7 +205,7 @@ async def node_identify_invoice(
             confidence = 0.95
             break
 
-    # Fuzzy match fallback
+    # 2. Fuzzy fallback
     if not matched_invoice and state["candidate_invoice_numbers"]:
         for candidate in state["candidate_invoice_numbers"]:
             results = await inv_repo.search_by_number_fuzzy(candidate)
@@ -192,28 +214,39 @@ async def node_identify_invoice(
                 confidence = 0.65
                 break
 
-    # Derive customer_id from Groq extraction first, then sender email domain
+    # 3. Derive customer_id (for dispute lookup / memory, NOT for payment matching)
     customer_id = state.get("customer_id")
     if not customer_id and state.get("groq_extracted"):
-        customer_id = state["groq_extracted"].get("customer_id") or state["groq_extracted"].get("customer_name")
+        customer_id = (
+            state["groq_extracted"].get("customer_id")
+            or state["groq_extracted"].get("customer_name")
+        )
     if not customer_id:
         sender = state["sender_email"]
         domain = sender.split("@")[-1].split(".")[0] if "@" in sender else sender
         customer_id = domain
 
-    # Try to find matching payment
-    if matched_invoice and customer_id:
-        matched_payment = await pay_repo.get_by_customer_and_invoice(
-            customer_id, matched_invoice.invoice_number
-        )
-        if matched_payment:
-            logger.info(f"[email_id={state['email_id']}] Matched payment_detail_id={matched_payment.payment_detail_id} for invoice={matched_invoice.invoice_number}")
+    # 4. Fetch ALL payment records keyed by invoice_number (reliable join)
+    matched_payment_ids: List[int] = []
+    if matched_invoice:
+        payments = await pay_repo.get_all_by_invoice_number(matched_invoice.invoice_number)
+        matched_payment_ids = [p.payment_detail_id for p in payments]
+        if matched_payment_ids:
+            logger.info(
+                f"[email_id={state['email_id']}] Matched {len(matched_payment_ids)} payment(s) "
+                f"for invoice={matched_invoice.invoice_number}: ids={matched_payment_ids}"
+            )
+        else:
+            logger.info(
+                f"[email_id={state['email_id']}] No payment records found "
+                f"for invoice={matched_invoice.invoice_number}"
+            )
 
     return {
         **state,
         "matched_invoice_id": matched_invoice.invoice_id if matched_invoice else None,
         "matched_invoice_number": matched_invoice.invoice_number if matched_invoice else None,
-        "matched_payment_id": matched_payment.payment_detail_id if matched_payment else None,
+        "matched_payment_ids": matched_payment_ids,
         "customer_id": customer_id,
         "routing_confidence": confidence,
     }
@@ -223,11 +256,17 @@ async def node_fetch_context(
     state: EmailProcessingState, db_session=None
 ) -> EmailProcessingState:
     """
-    ENHANCED: Now uses memory episodes for better dispute matching.
-    Memory episodes provide context about previous interactions for the same invoice.
+    Loads invoice details, ALL associated payment records, dispute memory, and
+    available dispute types.  All payment records are passed downstream so the
+    LLM has the complete payment picture (partial payments, chargebacks, etc.).
     """
     if not db_session:
-        return {**state, "invoice_details": None, "payment_details": None, "available_dispute_types": []}
+        return {
+            **state,
+            "invoice_details": None,
+            "all_payment_details": [],
+            "available_dispute_types": [],
+        }
 
     from src.data.repositories.repositories import (
         InvoiceRepository, PaymentRepository, DisputeRepository,
@@ -236,29 +275,39 @@ async def node_fetch_context(
     )
 
     invoice_details = None
-    payment_details = None
+    all_payment_details: List[Dict] = []
     existing_dispute_id = None
     memory_summary = None
     recent_episodes = []
     pending_questions = []
 
+    # ── Invoice ──────────────────────────────────────────────────────────────
     if state["matched_invoice_id"]:
         inv_repo = InvoiceRepository(db_session)
         invoice = await inv_repo.get_by_id(state["matched_invoice_id"])
         if invoice:
-            # Merge DB invoice_details with Groq-extracted data for richer context
             db_details = invoice.invoice_details or {}
             groq_data = state.get("groq_extracted") or {}
             # Groq wins on fields it found; DB fills the rest
             invoice_details = {**db_details, **{k: v for k, v in groq_data.items() if v is not None}}
 
-    if state["matched_payment_id"]:
+    # ── All payments for this invoice ────────────────────────────────────────
+    if state.get("matched_payment_ids"):
         pay_repo = PaymentRepository(db_session)
-        payment = await pay_repo.get_by_id(state["matched_payment_id"])
-        if payment:
-            payment_details = payment.payment_details
+        for pid in state["matched_payment_ids"]:
+            payment = await pay_repo.get_by_id(pid)
+            if payment and payment.payment_details:
+                all_payment_details.append({
+                    "payment_detail_id": payment.payment_detail_id,
+                    "invoice_number": payment.invoice_number,
+                    **payment.payment_details,
+                })
+        logger.info(
+            f"[email_id={state['email_id']}] Loaded {len(all_payment_details)} "
+            f"payment record(s) for invoice={state.get('matched_invoice_number')}"
+        )
 
-    # ENHANCED: Existing open disputes for customer + invoice
+    # ── Existing open disputes for customer + invoice ─────────────────────────
     if state["customer_id"] and state["matched_invoice_id"]:
         dispute_repo = DisputeRepository(db_session)
         open_disputes = await dispute_repo.get_by_customer(state["customer_id"])
@@ -267,16 +316,21 @@ async def node_fetch_context(
         if matching:
             existing_dispute = matching[0]
             existing_dispute_id = existing_dispute.dispute_id
-            logger.info(f"[email_id={state['email_id']}] Found existing dispute_id={existing_dispute_id} for customer={state['customer_id']}, invoice_id={state['matched_invoice_id']}")
+            logger.info(
+                f"[email_id={state['email_id']}] Found existing dispute_id={existing_dispute_id} "
+                f"for customer={state['customer_id']}, invoice_id={state['matched_invoice_id']}"
+            )
 
-            # Fetch memory episodes for context
             ep_repo = MemoryEpisodeRepository(db_session)
             recent_eps = await ep_repo.get_latest_n(existing_dispute_id, n=5)
             recent_episodes = [
                 {"actor": ep.actor, "type": ep.episode_type, "text": ep.content_text[:400]}
                 for ep in recent_eps
             ]
-            logger.info(f"[email_id={state['email_id']}] Loaded {len(recent_episodes)} recent episodes from dispute memory")
+            logger.info(
+                f"[email_id={state['email_id']}] Loaded {len(recent_episodes)} "
+                f"recent episodes from dispute memory"
+            )
 
             sum_repo = MemorySummaryRepository(db_session)
             summary = await sum_repo.get_for_dispute(existing_dispute_id)
@@ -290,19 +344,26 @@ async def node_fetch_context(
                 for q in pending_qs
             ]
 
-    # ENHANCED: Fetch all active dispute types from DB for dynamic classification
+    # ── Active dispute types ──────────────────────────────────────────────────
     dtype_repo = DisputeTypeRepository(db_session)
     all_types = await dtype_repo.get_active_types()
     available_dispute_types = [
-        {"reason_name": dt.reason_name, "description": dt.description or "", "severity_level": dt.severity_level or "MEDIUM"}
+        {
+            "reason_name": dt.reason_name,
+            "description": dt.description or "",
+            "severity_level": dt.severity_level or "MEDIUM",
+        }
         for dt in all_types
     ]
-    logger.info(f"[email_id={state['email_id']}] Loaded {len(available_dispute_types)} active dispute types from DB")
+    logger.info(
+        f"[email_id={state['email_id']}] Loaded {len(available_dispute_types)} "
+        f"active dispute types from DB"
+    )
 
     return {
         **state,
         "invoice_details": invoice_details,
-        "payment_details": payment_details,
+        "all_payment_details": all_payment_details,
         "existing_dispute_id": existing_dispute_id,
         "memory_summary": memory_summary,
         "recent_episodes": recent_episodes,
@@ -344,6 +405,12 @@ async def node_classify_email(
         for dt in available_types
     ])
 
+    # Summarise payments for context (avoid dumping huge JSON)
+    payments_summary = ""
+    all_pmts = state.get("all_payment_details", [])
+    if all_pmts:
+        payments_summary = f"\nPAYMENT RECORDS ({len(all_pmts)} total): " + json.dumps(all_pmts)[:600]
+
     prompt = f"""You are an AR dispute classification expert. Analyze the following customer email and classify it.
 
 EMAIL SUBJECT: {state['subject']}
@@ -351,6 +418,7 @@ EMAIL FROM: {state['sender_email']}
 EMAIL BODY: {state['body_text'][:1000]}
 ATTACHMENT TEXT: {' '.join(state['attachment_texts'])[:500]}
 {groq_block}
+{payments_summary}
 
 EXISTING DISPUTE CONTEXT (if any):
 {state.get('memory_summary') or 'None'}
@@ -429,7 +497,8 @@ async def node_generate_ai_response(
 
     # Build context
     invoice_ctx = json.dumps(state.get("invoice_details") or {}, indent=2)
-    payment_ctx = json.dumps(state.get("payment_details") or {}, indent=2)
+    all_pmts = state.get("all_payment_details") or []
+    payment_ctx = json.dumps(all_pmts, indent=2) if all_pmts else "{}"
     memory_ctx = state.get("memory_summary") or "No previous conversation"
     recent_eps = state.get("recent_episodes", [])
     pending_qs = state.get("pending_questions", [])
@@ -446,7 +515,7 @@ Body: {state['body_text'][:800]}
 INVOICE CONTEXT:
 {invoice_ctx}
 
-PAYMENT CONTEXT:
+PAYMENT RECORDS ({len(all_pmts)} record(s) on file):
 {payment_ctx}
 
 CONVERSATION MEMORY:
@@ -623,8 +692,16 @@ async def node_persist_results(
     state: EmailProcessingState, db_session=None
 ) -> EmailProcessingState:
     """
-    ENHANCED: Now creates new dispute types if LLM suggested one that doesn't exist.
-    Also ensures payment_detail_id is properly associated with disputes.
+    Saves dispute, analysis, memory episodes, open questions, and email routing.
+
+    Supporting documents auto-registration
+    ───────────────────────────────────────
+    After creating the DisputeAIAnalysis record we call
+    AnalysisSupportingRefRepository.upsert_supporting_doc() for:
+      • the matched invoice_data row  (reference_table="invoice_data")
+      • every matched payment_detail row  (reference_table="payment_detail")
+    This means the FA team always sees which DB records back the AI's conclusions,
+    without needing to manually add them via the UI.
     """
     if not db_session:
         return state
@@ -632,6 +709,7 @@ async def node_persist_results(
     from src.data.repositories.repositories import (
         DisputeTypeRepository, DisputeRepository, EmailRepository,
         MemoryEpisodeRepository, OpenQuestionRepository, UserRepository,
+        AnalysisSupportingRefRepository,
     )
     from src.data.models.postgres.models import (
         DisputeMaster, DisputeAIAnalysis, DisputeType,
@@ -642,7 +720,7 @@ async def node_persist_results(
     from src.data.models.postgres.models import EmailInbox
 
     try:
-        # 1. Resolve or create dispute type (ENHANCED)
+        # 1. Resolve or create dispute type
         dtype_repo = DisputeTypeRepository(db_session)
         dispute_type = await dtype_repo.get_by_name(state["dispute_type_name"])
 
@@ -653,7 +731,7 @@ async def node_persist_results(
                     reason_name=new_type_data["reason_name"],
                     description=new_type_data.get("description", ""),
                     severity_level=new_type_data.get("severity_level", "MEDIUM"),
-                    is_active=True
+                    is_active=True,
                 )
                 db_session.add(dispute_type)
                 await db_session.flush()
@@ -665,7 +743,7 @@ async def node_persist_results(
                         reason_name="General Clarification",
                         description="General inquiries and clarification requests",
                         severity_level="LOW",
-                        is_active=True
+                        is_active=True,
                     )
                     db_session.add(dispute_type)
                     await db_session.flush()
@@ -673,11 +751,14 @@ async def node_persist_results(
         dispute_id = state.get("existing_dispute_id")
 
         # 2. Create or reuse dispute
+        #    Use first payment_detail_id (if any) as the primary FK on the dispute row.
+        primary_payment_id = state["matched_payment_ids"][0] if state.get("matched_payment_ids") else None
+
         if not dispute_id:
             dispute = DisputeMaster(
                 email_id=state["email_id"],
                 invoice_id=state.get("matched_invoice_id"),
-                payment_detail_id=state.get("matched_payment_id"),
+                payment_detail_id=primary_payment_id,
                 customer_id=state["customer_id"] or "unknown",
                 dispute_type_id=dispute_type.dispute_type_id,
                 status="OPEN",
@@ -687,12 +768,19 @@ async def node_persist_results(
             db_session.add(dispute)
             await db_session.flush()
             dispute_id = dispute.dispute_id
-            logger.info(f"[email_id={state['email_id']}] Created new dispute_id={dispute_id} with payment_detail_id={state.get('matched_payment_id')}")
+            logger.info(
+                f"[email_id={state['email_id']}] Created dispute_id={dispute_id} | "
+                f"invoice_id={state.get('matched_invoice_id')} | "
+                f"payment_ids={state.get('matched_payment_ids')}"
+            )
         else:
             dispute = await DisputeRepository(db_session).get_by_id(dispute_id)
-            if dispute and not dispute.payment_detail_id and state.get("matched_payment_id"):
-                dispute.payment_detail_id = state.get("matched_payment_id")
-                logger.info(f"[email_id={state['email_id']}] Updated existing dispute_id={dispute_id} with payment_detail_id={state.get('matched_payment_id')}")
+            if dispute and not dispute.payment_detail_id and primary_payment_id:
+                dispute.payment_detail_id = primary_payment_id
+                logger.info(
+                    f"[email_id={state['email_id']}] Updated dispute_id={dispute_id} "
+                    f"with primary payment_detail_id={primary_payment_id}"
+                )
 
             log = DisputeActivityLog(
                 dispute_id=dispute_id,
@@ -715,6 +803,44 @@ async def node_persist_results(
         db_session.add(analysis)
         await db_session.flush()
 
+        # ── 3a. Auto-register supporting documents ───────────────────────────
+        # Invoice and all payment_detail rows are the "supporting documents" that
+        # back this analysis.  We upsert them into analysis_supporting_refs so the
+        # FA team can see exactly which records the AI examined.
+        ref_repo = AnalysisSupportingRefRepository(db_session)
+
+        if state.get("matched_invoice_id"):
+            await ref_repo.upsert_supporting_doc(
+                analysis_id=analysis.analysis_id,
+                reference_table="invoice_data",
+                ref_id_value=state["matched_invoice_id"],
+                context_note=(
+                    f"Invoice {state.get('matched_invoice_number', state['matched_invoice_id'])} "
+                    f"identified from email — primary supporting document"
+                ),
+            )
+            logger.info(
+                f"[email_id={state['email_id']}] Registered invoice_data id="
+                f"{state['matched_invoice_id']} as supporting doc for analysis_id={analysis.analysis_id}"
+            )
+
+        for pid in state.get("matched_payment_ids", []):
+            await ref_repo.upsert_supporting_doc(
+                analysis_id=analysis.analysis_id,
+                reference_table="payment_detail",
+                ref_id_value=pid,
+                context_note=(
+                    f"Payment record {pid} for invoice "
+                    f"{state.get('matched_invoice_number', '')} — supporting document"
+                ),
+            )
+        if state.get("matched_payment_ids"):
+            logger.info(
+                f"[email_id={state['email_id']}] Registered {len(state['matched_payment_ids'])} "
+                f"payment_detail record(s) as supporting docs for analysis_id={analysis.analysis_id}"
+            )
+        # ─────────────────────────────────────────────────────────────────────
+
         # 4. Memory episode – incoming email
         email_episode = DisputeMemoryEpisode(
             dispute_id=dispute_id,
@@ -726,10 +852,7 @@ async def node_persist_results(
         db_session.add(email_episode)
         await db_session.flush()
 
-        # 5. Memory episode – AI response (if any)
-        # NOTE: ai_response is now always set (acknowledgement or full answer).
-        # We only create the AI episode and mark auto_response_generated=True
-        # when the LLM decided it was safe to fully answer (can_auto_respond=True).
+        # 5. Memory episode – AI response / acknowledgement
         if state.get("ai_response"):
             ai_episode = DisputeMemoryEpisode(
                 dispute_id=dispute_id,
@@ -741,7 +864,6 @@ async def node_persist_results(
             db_session.add(ai_episode)
             await db_session.flush()
 
-            # Only mark questions answered if we actually auto-responded
             if state.get("auto_response_generated"):
                 answered_ids = state.get("_answers_pending_questions", [])
                 if answered_ids:
@@ -753,7 +875,7 @@ async def node_persist_results(
                             q.answered_in_episode_id = ai_episode.episode_id
                             q.answered_at = datetime.now(timezone.utc)
 
-        # 6. Open questions (FA investigation questions for sensitive cases)
+        # 6. Open questions (FA internal investigation tasks)
         for question_text in state.get("questions_to_ask", []):
             question = DisputeOpenQuestion(
                 dispute_id=dispute_id,
@@ -791,7 +913,7 @@ async def node_persist_results(
 
         await db_session.commit()
 
-        # 9. Trigger summarization if episode threshold reached
+        # 9. Trigger episode summarisation if threshold reached
         ep_repo = MemoryEpisodeRepository(db_session)
         ep_count = await ep_repo.count_for_dispute(dispute_id)
         from src.config.settings import settings
@@ -862,11 +984,11 @@ async def run_email_processing(
         "candidate_invoice_numbers": [],
         "matched_invoice_id": None,
         "matched_invoice_number": None,
-        "matched_payment_id": None,
+        "matched_payment_ids": [],
         "customer_id": None,
         "routing_confidence": 0.0,
         "invoice_details": None,
-        "payment_details": None,
+        "all_payment_details": [],
         "existing_dispute_id": None,
         "memory_summary": None,
         "recent_episodes": [],
