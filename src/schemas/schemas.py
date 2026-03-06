@@ -226,3 +226,45 @@ class PaymentDetailResponse(BaseModel):
     payment_details: Optional[Any] = None
 
     model_config = {"from_attributes": True}
+
+
+# ── Multiple Payment Details ──────────────────────────────────────────────────
+
+class PaymentDetailListResponse(BaseModel):
+    invoice_number: str
+    total: int
+    items: List[PaymentDetailResponse]
+
+
+class CustomerPaymentListResponse(BaseModel):
+    customer_id: str
+    total: int
+    items: List[PaymentDetailResponse]
+
+
+# ── Supporting Refs (documents) ───────────────────────────────────────────────
+
+class SupportingRefResponse(BaseModel):
+    ref_id: int
+    analysis_id: int
+    reference_table: str
+    ref_id_value: int
+    context_note: str
+
+    model_config = {"from_attributes": True}
+
+
+class SupportingRefCreate(BaseModel):
+    analysis_id: int
+    reference_table: str = Field(
+        ...,
+        description="Table name, e.g. 'payment_detail', 'invoice_data', 'email_attachments'",
+    )
+    ref_id_value: int = Field(..., description="Primary key value in reference_table")
+    context_note: str = Field(..., description="Why this document supports the analysis")
+
+
+class SupportingRefListResponse(BaseModel):
+    dispute_id: int
+    total: int
+    items: List[SupportingRefResponse]

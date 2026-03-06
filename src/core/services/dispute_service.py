@@ -47,6 +47,7 @@ class DisputeService:
         priority: Optional[str] = None,
         customer_id: Optional[str] = None,
         assigned_to: Optional[int] = None,
+        search: Optional[str] = None,
         limit: int = 20,
         offset: int = 0,
     ):
@@ -55,6 +56,7 @@ class DisputeService:
             priority=priority,
             customer_id=customer_id,
             assigned_to=assigned_to,
+            search=search,
             limit=limit,
             offset=offset,
         )

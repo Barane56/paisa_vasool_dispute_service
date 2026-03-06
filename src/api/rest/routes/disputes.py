@@ -21,6 +21,7 @@ async def list_disputes(
     priority: Optional[str] = Query(None, description="LOW/MEDIUM/HIGH"),
     customer_id: Optional[str] = Query(None),
     assigned_to: Optional[int] = Query(None, description="Filter by assigned user_id"),
+    search: Optional[str] = Query(None, description="Search by customer_id, description, dispute_id, or type"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -33,6 +34,7 @@ async def list_disputes(
         priority=priority,
         customer_id=customer_id,
         assigned_to=assigned_to,
+        search=search,
         limit=limit,
         offset=offset,
     )

@@ -69,14 +69,47 @@ class PaymentRepository(BaseRepository[PaymentDetail]):
         return result.scalar_one_or_none()
 
     async def get_by_customer_and_invoice(self, customer_id: str, invoice_number: str) -> Optional[PaymentDetail]:
+        """
+        Returns the first payment matching customer+invoice.
+        Uses scalars().first() instead of scalar_one_or_none() to avoid
+        MultipleResultsFound when an invoice has several payment records.
+        Prefer get_all_by_invoice_number() when you need all records.
+        """
         stmt = select(PaymentDetail).where(
             and_(
                 PaymentDetail.customer_id == customer_id,
                 PaymentDetail.invoice_number == invoice_number,
             )
+        ).limit(1)
+        result = await self.db.execute(stmt)
+        return result.scalars().first()
+
+    async def get_all_by_invoice_number(self, invoice_number: str) -> List[PaymentDetail]:
+        """Return ALL payment records linked to a given invoice number."""
+        stmt = (
+            select(PaymentDetail)
+            .where(PaymentDetail.invoice_number == invoice_number)
+            .order_by(PaymentDetail.payment_detail_id.asc())
         )
         result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
+        return list(result.scalars().all())
+
+    async def get_all_by_customer(self, customer_id: str, limit: int = 50, offset: int = 0) -> tuple[List[PaymentDetail], int]:
+        """Return paginated payment records for a customer."""
+        from sqlalchemy import func
+        count_stmt = select(func.count()).select_from(PaymentDetail).where(
+            PaymentDetail.customer_id == customer_id
+        )
+        count_result = await self.db.execute(count_stmt)
+        total = count_result.scalar_one()
+        stmt = (
+            select(PaymentDetail)
+            .where(PaymentDetail.customer_id == customer_id)
+            .order_by(PaymentDetail.payment_detail_id.desc())
+            .limit(limit).offset(offset)
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all()), total
 
     async def get_by_customer(self, customer_id: str) -> List[PaymentDetail]:
         stmt = select(PaymentDetail).where(PaymentDetail.customer_id == customer_id)
@@ -168,10 +201,12 @@ class DisputeRepository(BaseRepository[DisputeMaster]):
         priority: Optional[str] = None,
         customer_id: Optional[str] = None,
         assigned_to: Optional[int] = None,
+        search: Optional[str] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> tuple[List[DisputeMaster], int]:
-        from sqlalchemy import func
+        from sqlalchemy import func, or_
+        from src.data.models.postgres.models import DisputeType as DT
         filters = []
         if status:
             filters.append(DisputeMaster.status == status)
@@ -183,6 +218,23 @@ class DisputeRepository(BaseRepository[DisputeMaster]):
         base_stmt = select(DisputeMaster).options(
             selectinload(DisputeMaster.dispute_type)
         )
+
+        # Full-text search across customer_id, description, dispute_id, and
+        # dispute_type.reason_name (requires join when search is active)
+        if search:
+            q = f"%{search}%"
+            base_stmt = base_stmt.outerjoin(
+                DT, DT.dispute_type_id == DisputeMaster.dispute_type_id
+            )
+            filters.append(
+                or_(
+                    DisputeMaster.customer_id.ilike(q),
+                    DisputeMaster.description.ilike(q),
+                    func.cast(DisputeMaster.dispute_id, func.String).ilike(q),
+                    DT.reason_name.ilike(q),
+                )
+            )
+
         if assigned_to:
             base_stmt = base_stmt.join(
                 DisputeAssignment,
@@ -391,3 +443,72 @@ class OpenQuestionRepository(BaseRepository[DisputeOpenQuestion]):
             .values(status="EXPIRED")
         )
         await self.db.execute(stmt)
+
+
+class AnalysisSupportingRefRepository(BaseRepository[AnalysisSupportingRef]):
+    def __init__(self, db: AsyncSession):
+        super().__init__(AnalysisSupportingRef, db)
+
+    async def get_by_analysis(self, analysis_id: int) -> List[AnalysisSupportingRef]:
+        stmt = (
+            select(AnalysisSupportingRef)
+            .where(AnalysisSupportingRef.analysis_id == analysis_id)
+            .order_by(AnalysisSupportingRef.ref_id.asc())
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_by_dispute_via_analysis(self, dispute_id: int) -> List[AnalysisSupportingRef]:
+        """Return all supporting refs for all analyses of a dispute."""
+        stmt = (
+            select(AnalysisSupportingRef)
+            .join(DisputeAIAnalysis, AnalysisSupportingRef.analysis_id == DisputeAIAnalysis.analysis_id)
+            .where(DisputeAIAnalysis.dispute_id == dispute_id)
+            .order_by(AnalysisSupportingRef.ref_id.asc())
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def upsert_supporting_doc(
+        self,
+        analysis_id: int,
+        reference_table: str,
+        ref_id_value: int,
+        context_note: str,
+    ) -> AnalysisSupportingRef:
+        """
+        Create or update a supporting ref. If a row for (analysis_id, reference_table, ref_id_value)
+        already exists, update the context_note.
+        """
+        stmt = select(AnalysisSupportingRef).where(
+            and_(
+                AnalysisSupportingRef.analysis_id == analysis_id,
+                AnalysisSupportingRef.reference_table == reference_table,
+                AnalysisSupportingRef.ref_id_value == ref_id_value,
+            )
+        )
+        result = await self.db.execute(stmt)
+        existing = result.scalar_one_or_none()
+        if existing:
+            existing.context_note = context_note
+            await self.db.flush()
+            return existing
+        ref = AnalysisSupportingRef(
+            analysis_id=analysis_id,
+            reference_table=reference_table,
+            ref_id_value=ref_id_value,
+            context_note=context_note,
+        )
+        self.db.add(ref)
+        await self.db.flush()
+        return ref
+
+    async def delete_ref(self, ref_id: int) -> bool:
+        stmt = select(AnalysisSupportingRef).where(AnalysisSupportingRef.ref_id == ref_id)
+        result = await self.db.execute(stmt)
+        ref = result.scalar_one_or_none()
+        if not ref:
+            return False
+        await self.db.delete(ref)
+        await self.db.flush()
+        return True
