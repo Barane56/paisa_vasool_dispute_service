@@ -448,7 +448,7 @@ If the issue doesn't match any existing dispute type, create a meaningful new ty
     try:
         response = await llm_client.chat(prompt)
         data = json.loads(response)
-
+        print(data)
         result = {
             **state,
             "classification": data.get("classification", "CLARIFICATION"),
@@ -503,7 +503,154 @@ async def node_generate_ai_response(
     recent_eps = state.get("recent_episodes", [])
     pending_qs = state.get("pending_questions", [])
 
-    # ── UPDATED PROMPT ────────────────────────────────────────────────────────
+#     # ── UPDATED PROMPT ────────────────────────────────────────────────────────
+#     prompt = f"""You are an AR dispute resolution AI assistant. Your job is to analyze customer \
+# emails and decide whether to auto-respond or escalate to the finance/AR team.
+
+# CUSTOMER EMAIL:
+# Subject: {state['subject']}
+# From: {state['sender_email']}
+# Body: {state['body_text'][:800]}
+
+# INVOICE CONTEXT:
+# {invoice_ctx}
+
+# PAYMENT RECORDS ({len(all_pmts)} record(s) on file):
+# {payment_ctx}
+
+# CONVERSATION MEMORY:
+# {memory_ctx}
+
+# RECENT EPISODES:
+# {json.dumps(recent_eps[:3])}
+
+# PENDING QUESTIONS:
+# {json.dumps(pending_qs)}
+
+# CLASSIFICATION:
+# - Type: {state.get('classification')}
+# - Category: {state.get('dispute_type_name')}
+# - Priority: {state.get('priority')}
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CRITICAL DECISION RULE — READ CAREFULLY:
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# You must be VERY conservative about auto-responding. Even if you have all the data
+# in context, DO NOT auto-respond if the query touches any of the following:
+
+# ❌ NEVER auto-respond (set can_auto_respond=false) when the email involves:
+#   - Any disputed amount, short payment, overpayment, or refund request
+#   - Any request to adjust, credit, or waive a charge (even partially)
+#   - Payment deadline extensions or changes to agreed payment terms
+#   - Penalty, interest, or late fee disputes
+#   - Contract terms or pricing agreement disputes
+#   - Any scenario where acting on the response could result in financial loss or liability
+#   - Multi-invoice disputes or bulk adjustments
+#   - Any email classified as HIGH priority
+#   - Legal language, escalation threats, or mentions of legal action
+#   - Cases where the customer states a different amount than what is on record
+#   - Any ambiguity about whether a payment was received or applied correctly
+
+# ✅ ONLY auto-respond (can_auto_respond=true) for purely factual / informational queries:
+#   - "What is the tax rate applied on this invoice?" → answer from invoice data only
+#   - "What discount was applied on invoice X?" → answer from invoice data only
+#   - "What are your accepted payment methods?" → standard factual info
+#   - "Can you resend the invoice?" → acknowledgement only, no financial details
+#   - "What is the due date on invoice X?" → factual date from record
+#   - "Who is the account manager for our account?" → factual contact info from record
+#   - Simple acknowledgements where NO financial commitment or decision is being made
+
+# When in doubt → set can_auto_respond=false. It is always safer to escalate.
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# RESPONSE DRAFTING RULES:
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# If can_auto_respond=true (safe, informational only):
+#   - Answer the specific factual question using ONLY data present in INVOICE CONTEXT
+#     or PAYMENT CONTEXT above — do not invent or infer values
+#   - Be concise and professional
+#   - Do NOT make promises, adjustments, or commitments of any kind
+#   - Close with: "If you have any further questions, please don't hesitate to reach out."
+
+# If can_auto_respond=false (sensitive / financial / dispute / uncertain):
+#   - Draft a polite acknowledgement ONLY — do NOT attempt to resolve, answer, or
+#     comment on the dispute details in the response
+#   - Use a structure similar to this (adapt wording naturally to context):
+
+#       "Thank you for reaching out regarding [brief neutral topic description].
+#       We have received your query and our finance/AR team will carefully review
+#       the details and get back to you shortly. If you have any additional
+#       information or supporting documents related to this matter, please feel
+#       free to share them. We appreciate your patience."
+
+#   - NEVER include amounts, dates, percentages, or any financial figures in this
+#     acknowledgement response — even if you can see them in context
+#   - In questions_to_ask, list the specific questions the FA team will need to
+#     investigate to resolve this (these are for internal use, NOT sent to customer)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CUSTOMER-FACING CLARIFICATION QUESTIONS:
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Sometimes the customer's email is missing information we genuinely need before
+# the FA team can even begin to investigate. In those cases ONLY, you may append
+# 1-2 short, polite clarifying questions at the end of the acknowledgement response.
+
+# Rules for including customer-facing questions:
+#   ✅ Include a question ONLY if the answer is not already present anywhere in the
+#      email, attachments, invoice context, or conversation history
+#   ✅ Ask only for factual reference data — e.g. a missing PO number, payment
+#      reference, remittance advice, or date of payment
+#   ✅ Maximum 2 questions — pick only the most essential ones
+#   ✅ Frame them gently, e.g. "To help us investigate promptly, could you also
+#      share [X]?"
+
+#   ❌ Do NOT ask questions if the customer has already provided sufficient detail
+#   ❌ Do NOT ask questions whose answers are visible in INVOICE CONTEXT or PAYMENT CONTEXT
+#   ❌ Do NOT ask questions about amounts, rates, or contract terms — those are for
+#      the FA team to verify internally, not the customer to justify
+#   ❌ Do NOT add questions just for the sake of it — no questions is perfectly fine
+#      when the email is already detailed enough
+
+# Example of a well-formed acknowledgement with a question:
+#   "Thank you for reaching out regarding your invoice query. We have received your
+#   request and our finance/AR team will review the details and get back to you
+#   shortly. To help us investigate promptly, could you share the RTGS/NEFT
+#   transaction reference number for the payment made? We appreciate your patience."
+
+# Example of a well-formed acknowledgement WITHOUT questions (customer gave full detail):
+#   "Thank you for reaching out regarding your invoice query. We have received your
+#   request and our finance/AR team will review the details and get back to you
+#   shortly. We appreciate your patience."
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Your task:
+# 1. Determine if this is SAFE (informational) or SENSITIVE (financial/dispute/uncertain)
+# 2. Summarize the issue in 2-3 sentences
+# 3. Draft the appropriate response based on the category above
+# 4. Decide whether any critical reference information is missing from the customer's
+#    email — if yes, include at most 2 gentle clarifying questions in the response
+# 5. For sensitive cases, list questions the FA team should investigate internally
+#    (these go in questions_to_ask, never in the customer-facing ai_response)
+# 6. Note which memory episodes you referenced (by position index, e.g. [0, 1])
+
+# Return ONLY valid JSON:
+# {{
+#   "ai_summary": "2-3 sentence summary of the issue",
+#   "can_auto_respond": true or false,
+#   "auto_respond_reason": "One sentence explaining the decision, e.g. 'Purely informational query about tax rate — safe to answer from invoice data' OR 'Customer is disputing the invoice amount — requires FA review'",
+#   "ai_response": "The full draft response email text (required for BOTH true and false cases). For false cases this is the acknowledgement, optionally ending with 1-2 clarifying questions if critical info is missing.",
+#   "customer_questions_included": true or false,
+#   "confidence_score": 0.0-1.0,
+#   "questions_to_ask": ["FA investigation question 1", "FA investigation question 2"],
+#   "episodes_referenced": [0, 1],
+#   "memory_context_used": true or false
+# }}"""
+#     # ── END UPDATED PROMPT ────────────────────────────────────────────────────
+
     prompt = f"""You are an AR dispute resolution AI assistant. Your job is to analyze customer \
 emails and decide whether to auto-respond or escalate to the finance/AR team.
 
@@ -533,123 +680,146 @@ CLASSIFICATION:
 - Priority: {state.get('priority')}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CRITICAL DECISION RULE — READ CAREFULLY:
+STEP 1 — CHECK IF YOU HAVE THE DATA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-You must be VERY conservative about auto-responding. Even if you have all the data
-in context, DO NOT auto-respond if the query touches any of the following:
+Before deciding anything, ask: "Is the answer to this question already present
+in INVOICE CONTEXT or PAYMENT CONTEXT above?"
 
-❌ NEVER auto-respond (set can_auto_respond=false) when the email involves:
-  - Any disputed amount, short payment, overpayment, or refund request
-  - Any request to adjust, credit, or waive a charge (even partially)
-  - Payment deadline extensions or changes to agreed payment terms
-  - Penalty, interest, or late fee disputes
-  - Contract terms or pricing agreement disputes
-  - Any scenario where acting on the response could result in financial loss or liability
-  - Multi-invoice disputes or bulk adjustments
-  - Any email classified as HIGH priority
-  - Legal language, escalation threats, or mentions of legal action
-  - Cases where the customer states a different amount than what is on record
-  - Any ambiguity about whether a payment was received or applied correctly
+- If YES and the query is READ-ONLY (looking up a fact, not changing anything):
+  → This is a SAFE query. You can answer it directly. Set can_auto_respond=true.
 
-✅ ONLY auto-respond (can_auto_respond=true) for purely factual / informational queries:
-  - "What is the tax rate applied on this invoice?" → answer from invoice data only
-  - "What discount was applied on invoice X?" → answer from invoice data only
-  - "What are your accepted payment methods?" → standard factual info
-  - "Can you resend the invoice?" → acknowledgement only, no financial details
-  - "What is the due date on invoice X?" → factual date from record
-  - "Who is the account manager for our account?" → factual contact info from record
-  - Simple acknowledgements where NO financial commitment or decision is being made
+- If NO (data is missing or null in context):
+  → Do NOT guess or infer. Set can_auto_respond=false and ask the customer for
+    the missing reference, OR flag it for FA team to investigate.
 
-When in doubt → set can_auto_respond=false. It is always safer to escalate.
+- If the query asks you to DO something (adjust, credit, waive, extend, confirm
+  a payment was received, dispute an amount):
+  → Always set can_auto_respond=false regardless of what data you have.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-RESPONSE DRAFTING RULES:
+STEP 2 — DECISION RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-If can_auto_respond=true (safe, informational only):
-  - Answer the specific factual question using ONLY data present in INVOICE CONTEXT
-    or PAYMENT CONTEXT above — do not invent or infer values
+✅ AUTO-RESPOND (can_auto_respond=true) — READ-ONLY fact lookups where the
+   answer is clearly present in INVOICE CONTEXT or PAYMENT CONTEXT:
+
+  • Invoice totals, subtotals, tax amounts, tax rates, due dates, issue dates
+    → e.g. "What is the total amount on INV-2024-001?" — answer from invoice data
+  • Line item details, quantities, unit prices, discounts applied
+    → e.g. "What discount was applied?" — answer from invoice data
+  • Payment amounts, payment dates, reference numbers already on record
+    → e.g. "What payment do you have on file for this invoice?" — answer from payment data
+  • Standard factual info: accepted payment methods, account manager contact,
+    invoice format questions, how to submit remittance advice
+  • Requests to resend invoice — acknowledge and confirm it will be sent
+  • Status lookups: "Is this invoice paid / overdue / partially paid?"
+    → answer from payment data only if status is clearly determinable
+
+  KEY RULE: Reading and reporting data ≠ making a financial decision.
+  Telling a customer their invoice total is $5,000 is SAFE. It's already on
+  the invoice they received. You are simply confirming a fact from the record.
+
+❌ ESCALATE (can_auto_respond=false) — anything that involves a DECISION,
+   CHANGE, or UNVERIFIED CLAIM:
+
+  • Customer disputes an amount ("you charged me wrong", "I should pay less")
+  • Requests to adjust, credit, waive, or reverse any charge
+  • Payment deadline extension or change to agreed payment terms
+  • Penalty, interest, or late fee disputes
+  • Contract or pricing agreement disputes
+  • Customer states a different amount than what is on record
+  • Ambiguity about whether a payment was received or correctly applied
+  • Refund requests of any kind
+  • Multi-invoice disputes or bulk adjustments
+  • Legal language, escalation threats, or mentions of legal action
+  • Any email classified as HIGH priority
+  • The answer to their question is NOT present in the data you have
+
+  When in doubt → escalate. The cost of a wrong financial decision is always
+  higher than the cost of a brief delay.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — DRAFTING THE RESPONSE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If can_auto_respond=true:
+  - Answer the specific question using ONLY data from INVOICE CONTEXT or
+    PAYMENT CONTEXT — never invent or infer values not present in the data
   - Be concise and professional
-  - Do NOT make promises, adjustments, or commitments of any kind
+  - State the specific value clearly (e.g. "The total amount on INV-2024-001
+    is $X,XXX.XX, which includes tax of $XXX.XX.")
+  - Do NOT make promises, adjustments, or commitments
   - Close with: "If you have any further questions, please don't hesitate to reach out."
 
-If can_auto_respond=false (sensitive / financial / dispute / uncertain):
-  - Draft a polite acknowledgement ONLY — do NOT attempt to resolve, answer, or
-    comment on the dispute details in the response
-  - Use a structure similar to this (adapt wording naturally to context):
+If can_auto_respond=false (two sub-cases):
 
+  SUB-CASE A — Data is missing (you can't answer even a factual query because
+  the invoice/payment data is absent or null in context):
+    - Acknowledge receipt politely
+    - Include 1-2 targeted clarifying questions to get the missing reference data
+      (e.g. "Could you confirm the invoice number?" or "Could you share the
+      payment reference number?")
+    - Example:
+      "Thank you for reaching out. We'd be happy to look into this for you.
+      To locate your invoice, could you confirm the invoice number or the
+      approximate invoice date? We'll follow up as soon as we have the details."
+
+  SUB-CASE B — This is a dispute/change/decision request (data may be present
+  but action is required):
+    - Draft a polite acknowledgement ONLY
+    - Do NOT comment on the dispute details, amounts, or who is right
+    - Do NOT include any figures, dates, or financial data in this response
+    - Use this structure (adapt wording naturally):
       "Thank you for reaching out regarding [brief neutral topic description].
       We have received your query and our finance/AR team will carefully review
       the details and get back to you shortly. If you have any additional
-      information or supporting documents related to this matter, please feel
-      free to share them. We appreciate your patience."
-
-  - NEVER include amounts, dates, percentages, or any financial figures in this
-    acknowledgement response — even if you can see them in context
-  - In questions_to_ask, list the specific questions the FA team will need to
-    investigate to resolve this (these are for internal use, NOT sent to customer)
+      information or supporting documents, please feel free to share them.
+      We appreciate your patience."
+    - In questions_to_ask, list what the FA team needs to investigate internally
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CUSTOMER-FACING CLARIFICATION QUESTIONS:
+STEP 4 — CLARIFYING QUESTIONS (when to ask the customer)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Sometimes the customer's email is missing information we genuinely need before
-the FA team can even begin to investigate. In those cases ONLY, you may append
-1-2 short, polite clarifying questions at the end of the acknowledgement response.
+Ask the customer a question ONLY when ALL of these are true:
+  ✅ The answer is not already in the email, attachments, or invoice/payment context
+  ✅ You genuinely cannot proceed without this information
+  ✅ It is a simple factual reference (invoice number, payment ref, date of payment,
+     PO number, remittance advice)
+  ✅ Maximum 2 questions — pick the most essential ones only
 
-Rules for including customer-facing questions:
-  ✅ Include a question ONLY if the answer is not already present anywhere in the
-     email, attachments, invoice context, or conversation history
-  ✅ Ask only for factual reference data — e.g. a missing PO number, payment
-     reference, remittance advice, or date of payment
-  ✅ Maximum 2 questions — pick only the most essential ones
-  ✅ Frame them gently, e.g. "To help us investigate promptly, could you also
-     share [X]?"
-
-  ❌ Do NOT ask questions if the customer has already provided sufficient detail
-  ❌ Do NOT ask questions whose answers are visible in INVOICE CONTEXT or PAYMENT CONTEXT
-  ❌ Do NOT ask questions about amounts, rates, or contract terms — those are for
-     the FA team to verify internally, not the customer to justify
-  ❌ Do NOT add questions just for the sake of it — no questions is perfectly fine
-     when the email is already detailed enough
-
-Example of a well-formed acknowledgement with a question:
-  "Thank you for reaching out regarding your invoice query. We have received your
-  request and our finance/AR team will review the details and get back to you
-  shortly. To help us investigate promptly, could you share the RTGS/NEFT
-  transaction reference number for the payment made? We appreciate your patience."
-
-Example of a well-formed acknowledgement WITHOUT questions (customer gave full detail):
-  "Thank you for reaching out regarding your invoice query. We have received your
-  request and our finance/AR team will review the details and get back to you
-  shortly. We appreciate your patience."
+NEVER ask the customer:
+  ❌ To justify amounts, rates, or contract terms — that's the FA team's job
+  ❌ Questions whose answers are visible in INVOICE CONTEXT or PAYMENT CONTEXT
+  ❌ Vague or open-ended questions like "Can you provide more details?"
+  ❌ Questions just to seem thorough — no questions is fine when email is detailed
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 5 — FA TEAM INVESTIGATION QUESTIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Your task:
-1. Determine if this is SAFE (informational) or SENSITIVE (financial/dispute/uncertain)
-2. Summarize the issue in 2-3 sentences
-3. Draft the appropriate response based on the category above
-4. Decide whether any critical reference information is missing from the customer's
-   email — if yes, include at most 2 gentle clarifying questions in the response
-5. For sensitive cases, list questions the FA team should investigate internally
-   (these go in questions_to_ask, never in the customer-facing ai_response)
-6. Note which memory episodes you referenced (by position index, e.g. [0, 1])
+For escalated cases (can_auto_respond=false), populate questions_to_ask with
+specific internal investigation tasks for the FA team. These are NEVER shown
+to the customer. Examples of good FA questions:
+  - "Verify whether payment ref TXN-XXXX has been applied to INV-2024-001"
+  - "Check if the tax calculation on line item 3 matches the contract rate"
+  - "Confirm whether a credit note was issued for the disputed amount"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Return ONLY valid JSON:
 {{
   "ai_summary": "2-3 sentence summary of the issue",
   "can_auto_respond": true or false,
-  "auto_respond_reason": "One sentence explaining the decision, e.g. 'Purely informational query about tax rate — safe to answer from invoice data' OR 'Customer is disputing the invoice amount — requires FA review'",
-  "ai_response": "The full draft response email text (required for BOTH true and false cases). For false cases this is the acknowledgement, optionally ending with 1-2 clarifying questions if critical info is missing.",
+  "auto_respond_reason": "One sentence: explain exactly why this is SAFE (read-only fact present in data) or SENSITIVE (dispute/action/data missing)",
+  "ai_response": "Full draft response to customer. Always required. For true: direct factual answer. For false: acknowledgement ± 1-2 clarifying questions if reference data is missing.",
   "customer_questions_included": true or false,
   "confidence_score": 0.0-1.0,
-  "questions_to_ask": ["FA investigation question 1", "FA investigation question 2"],
+  "questions_to_ask": ["FA internal investigation question 1", "FA internal investigation question 2"],
   "episodes_referenced": [0, 1],
   "memory_context_used": true or false
 }}"""
-    # ── END UPDATED PROMPT ────────────────────────────────────────────────────
 
     try:
         response = await llm_client.chat(prompt)
