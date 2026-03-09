@@ -466,7 +466,32 @@ async def node_fetch_context(
                         )
                         break
 
-            # Level 3: customer only (cold mail — no invoice in email)
+            # Level 3: invoice NOW known but dispute was created from a cold mail
+            # (invoice_id was NULL on the original dispute). This is the follow-up
+            # email case — customer sent a vague email first, we asked for details,
+            # now they replied with the invoice number. Link and update invoice_id.
+            if not matched_dispute and matched_invoice_id:
+                for d in open_disputes:
+                    if d.invoice_id is None:
+                        matched_dispute = d
+                        logger.info(
+                            f"[email_id={state['email_id']}] Cold-mail follow-up: "
+                            f"linking invoice_id={matched_invoice_id} to existing "
+                            f"dispute_id={d.dispute_id} (was invoice-less)"
+                        )
+                        # Patch the dispute row with the now-known invoice_id
+                        # so future lookups hit level 1/2 correctly
+                        try:
+                            d.invoice_id = matched_invoice_id
+                            await db_session.flush()
+                        except Exception as patch_err:
+                            logger.warning(
+                                f"[email_id={state['email_id']}] Could not patch "
+                                f"invoice_id on dispute: {patch_err}"
+                            )
+                        break
+
+            # Level 4: customer only (cold mail — no invoice in email)
             # Take the most recent open dispute for this customer.
             # embed_and_search will validate the semantic match later.
             if not matched_dispute and not matched_invoice_id:
@@ -810,14 +835,14 @@ no "Best regards", no sign-off. Write as if you are typing a direct reply.
 
 STEP 1 — Decide: can you answer this directly?
 
-  ✅ Answer directly (can_auto_respond=true) ONLY when ALL of these are true:
+   Answer directly (can_auto_respond=true) ONLY when ALL of these are true:
      • The question is READ-ONLY — customer wants to KNOW something, not change anything
      • The answer is clearly present in INVOICE ON RECORD or PAYMENT RECORDS above
      • There is no dispute, discrepancy, or disagreement about the figures
      Examples: due date, invoice total, tax amount, payment status, line item breakdown,
                accepted payment methods, account manager contact
 
-  ❌ Escalate (can_auto_respond=false) when ANY of these are true:
+   Escalate (can_auto_respond=false) when ANY of these are true:
      • Customer is disputing an amount, claiming they paid more/less, or saying figures are wrong
      • Customer wants an adjustment, credit, waiver, or refund
      • Customer is questioning the correctness of the invoice (even politely)
@@ -1116,17 +1141,30 @@ async def node_persist_results(
         )
         await db_session.execute(stmt)
 
-        # 8. Auto-assign to FA if not auto-responded
+        # 8. Auto-assign to FA if not auto-responded AND no active assignment exists yet
         if not state.get("auto_response_generated"):
-            user_repo = UserRepository(db_session)
-            all_users = await user_repo.get_all(limit=10)
-            if all_users:
-                assign = DisputeAssignment(
-                    dispute_id=dispute_id,
-                    assigned_to=all_users[0].user_id,
-                    status="ACTIVE",
+            from src.data.repositories.repositories import DisputeAssignmentRepository
+            assign_repo       = DisputeAssignmentRepository(db_session)
+            active_assignment = await assign_repo.get_active_assignment(dispute_id)
+            if not active_assignment:
+                user_repo = UserRepository(db_session)
+                all_users = await user_repo.get_all(limit=10)
+                if all_users:
+                    assign = DisputeAssignment(
+                        dispute_id=dispute_id,
+                        assigned_to=all_users[0].user_id,
+                        status="ACTIVE",
+                    )
+                    db_session.add(assign)
+                    logger.info(
+                        f"[email_id={state['email_id']}] Auto-assigned dispute_id={dispute_id} "
+                        f"to user_id={all_users[0].user_id}"
+                    )
+            else:
+                logger.info(
+                    f"[email_id={state['email_id']}] Skipped auto-assign: dispute_id={dispute_id} "
+                    f"already assigned to user_id={active_assignment.assigned_to}"
                 )
-                db_session.add(assign)
 
         await db_session.commit()
 
