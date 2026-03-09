@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     # Memory / summarization threshold
     EPISODE_SUMMARIZE_THRESHOLD: int = 10
 
+    # Langfuse observability
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_BASE_URL: str = "https://cloud.langfuse.com"
+
     EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
     EMBEDDING_DIMS: int = 384
     EPISODE_SIMILARITY_THRESHOLD: float = 0.75

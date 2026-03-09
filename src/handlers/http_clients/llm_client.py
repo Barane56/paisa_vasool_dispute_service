@@ -40,6 +40,10 @@ from fastembed import TextEmbedding
 
 from src.config.settings import settings
 from src.core.exceptions import LLMError, InvoiceExtractionError
+from src.observability import observe, langfuse_context
+from src.control.prompts import build_extract_invoice_prompt, build_summarize_episodes_prompt
+from src.control.prompts.extract_invoice import PROMPT_NAME as EXTRACT_PROMPT_NAME, PROMPT_VERSION as EXTRACT_PROMPT_VERSION
+from src.control.prompts.summarize_episodes import PROMPT_NAME as SUMMARIZE_PROMPT_NAME, PROMPT_VERSION as SUMMARIZE_PROMPT_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -101,39 +105,13 @@ class LLMClient:
     # ------------------------------------------------------------------ #
     # Invoice data extraction                                             #
     # ------------------------------------------------------------------ #
+    @observe(name="llm_extract_invoice_data")
     async def extract_invoice_data(self, raw_text: str) -> dict:
-        prompt = f"""You are a financial document parser.
-Extract all relevant invoice information from the text below and return ONLY valid JSON.
-
-TEXT:
-\"\"\"
-{raw_text[:6000]}
-\"\"\"
-
-Return ONLY valid JSON with these exact keys (use null for missing fields):
-{{
-  "invoice_number": "string or null",
-  "invoice_date": "YYYY-MM-DD or null",
-  "due_date": "YYYY-MM-DD or null",
-  "vendor_name": "string or null",
-  "customer_name": "string or null",
-  "customer_id": "string or null",
-  "line_items": [
-    {{
-      "description": "string",
-      "qty": number_or_null,
-      "unit_price": number_or_null,
-      "total": number_or_null
-    }}
-  ],
-  "subtotal": number_or_null,
-  "tax_amount": number_or_null,
-  "total_amount": number_or_null,
-  "currency": "USD or string or null",
-  "payment_terms": "string or null",
-  "po_number": "string or null",
-  "notes": "string or null"
-}}"""
+        prompt = build_extract_invoice_prompt(raw_text)
+        langfuse_context.update_current_observation(
+            input={"prompt": prompt},
+            metadata={"prompt_name": EXTRACT_PROMPT_NAME, "prompt_version": EXTRACT_PROMPT_VERSION},
+        )
 
         try:
             response = await self.client.chat.completions.create(
@@ -157,24 +135,13 @@ Return ONLY valid JSON with these exact keys (use null for missing fields):
     # ------------------------------------------------------------------ #
     # Summarization                                                       #
     # ------------------------------------------------------------------ #
+    @observe(name="llm_summarize_episodes")
     async def summarize_episodes(self, episodes: list, existing_summary: str = None) -> str:
-        context = ""
-        if existing_summary:
-            context = f"EXISTING SUMMARY:\n{existing_summary}\n\nNEW EPISODES TO INCORPORATE:\n"
-
-        episodes_text = "\n".join([
-            f"[{ep.get('actor', 'UNKNOWN')}] {ep.get('content_text', '')[:300]}"
-            for ep in episodes
-        ])
-
-        prompt = f"""{context}
-Episodes:
-{episodes_text}
-
-Summarize the full dispute conversation history in 3-5 sentences.
-Focus on: what the customer complained about, what was already asked/answered, current status.
-Return a plain text summary (NOT JSON).
-"""
+        prompt = build_summarize_episodes_prompt(episodes, existing_summary)
+        langfuse_context.update_current_observation(
+            input={"prompt": prompt},
+            metadata={"prompt_name": SUMMARIZE_PROMPT_NAME, "prompt_version": SUMMARIZE_PROMPT_VERSION},
+        )
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,

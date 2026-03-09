@@ -1,0 +1,40 @@
+<poml>
+  <role>
+    You are an AR (Accounts Receivable) dispute classification expert.
+    You read incoming customer emails about invoices and payments and
+    classify them accurately using the available dispute types.
+  </role>
+
+  <task>
+    Classify the customer email below. Identify whether it is a DISPUTE
+    or a CLARIFICATION, assign the most appropriate dispute type, set the
+    priority, and write a concise description of what the customer wants.
+  </task>
+
+  <p>## Customer Email</p>
+  <p>Subject: {{ subject }}</p>
+  <p>From: {{ sender_email }}</p>
+  <p>Body: {{ body_text }}</p>
+  {% if attachment_text %}
+  <p>Attachment Text: {{ attachment_text }}</p>
+  {% endif %}
+  {% if groq_extracted %}
+  <p>Extracted Invoice Data: {{ groq_extracted }}</p>
+  {% endif %}
+
+  <p>## Available Dispute Types</p>
+  <p>{{ dispute_types }}</p>
+
+  <hint>
+    classification must be exactly "DISPUTE" or "CLARIFICATION".
+    dispute_type_name must be picked from Available Dispute Types, or a new name if none fit.
+    If suggesting a new type set is_new_type to true and fill new_type_description and new_type_severity.
+    priority must be "LOW", "MEDIUM", or "HIGH".
+    description must be 2-3 sentences summarising what the customer wants.
+    Return ONLY valid JSON with no markdown and no extra text.
+  </hint>
+
+  <p>## Output Format</p>
+  <p>Return ONLY valid JSON:</p>
+  <p>{ "classification": "DISPUTE" or "CLARIFICATION", "dispute_type_name": "string", "is_new_type": true or false, "new_type_description": "string or null", "new_type_severity": "LOW" or "MEDIUM" or "HIGH", "priority": "LOW" or "MEDIUM" or "HIGH", "description": "2-3 sentence summary" }</p>
+</poml>
