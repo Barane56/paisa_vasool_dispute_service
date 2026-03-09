@@ -1,6 +1,31 @@
+"""
+Repositories – all DB access for the dispute resolution service.
+
+NEW in this version
+───────────────────
+MemoryEpisodeRepository
+  • upsert_embedding(episode_id, embedding)
+      Saves the AI-summary embedding into content_embedding column.
+
+  • search_similar_by_customer(customer_id, query_embedding, top_k, threshold)
+      pgvector cosine similarity search scoped to a single customer_id.
+      Joins dispute_memory_episode → dispute_master to scope by customer.
+      Returns top-k episodes above the similarity threshold, ordered by score.
+
+Embedding model swap
+────────────────────
+The vector dimension is read from settings.EMBEDDING_DIMS at query time.
+When you upgrade from bge-small (384) to bge-base (768):
+  1. settings.py  → EMBEDDING_MODEL / EMBEDDING_DIMS
+  2. SQL          → ALTER TABLE dispute_memory_episode
+                    ALTER COLUMN content_embedding TYPE vector(768);
+  3. Re-embed existing episodes (optional backfill job)
+Nothing in this file needs to change.
+"""
+
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, select, update, and_
+from sqlalchemy import func, select, update, and_, text
 from sqlalchemy.orm import selectinload
 
 from .base import BaseRepository
@@ -50,7 +75,6 @@ class InvoiceRepository(BaseRepository[InvoiceData]):
         return list(result.scalars().all())
 
     async def get_all_paginated(self, limit: int = 20, offset: int = 0) -> tuple[List[InvoiceData], int]:
-        from sqlalchemy import func
         count_stmt = select(func.count()).select_from(InvoiceData)
         count_result = await self.db.execute(count_stmt)
         total = count_result.scalar_one()
@@ -69,12 +93,6 @@ class PaymentRepository(BaseRepository[PaymentDetail]):
         return result.scalar_one_or_none()
 
     async def get_by_customer_and_invoice(self, customer_id: str, invoice_number: str) -> Optional[PaymentDetail]:
-        """
-        Returns the first payment matching customer+invoice.
-        Uses scalars().first() instead of scalar_one_or_none() to avoid
-        MultipleResultsFound when an invoice has several payment records.
-        Prefer get_all_by_invoice_number() when you need all records.
-        """
         stmt = select(PaymentDetail).where(
             and_(
                 PaymentDetail.customer_id == customer_id,
@@ -85,7 +103,6 @@ class PaymentRepository(BaseRepository[PaymentDetail]):
         return result.scalars().first()
 
     async def get_all_by_invoice_number(self, invoice_number: str) -> List[PaymentDetail]:
-        """Return ALL payment records linked to a given invoice number."""
         stmt = (
             select(PaymentDetail)
             .where(PaymentDetail.invoice_number == invoice_number)
@@ -95,8 +112,6 @@ class PaymentRepository(BaseRepository[PaymentDetail]):
         return list(result.scalars().all())
 
     async def get_all_by_customer(self, customer_id: str, limit: int = 50, offset: int = 0) -> tuple[List[PaymentDetail], int]:
-        """Return paginated payment records for a customer."""
-        from sqlalchemy import func
         count_stmt = select(func.count()).select_from(PaymentDetail).where(
             PaymentDetail.customer_id == customer_id
         )
@@ -205,7 +220,7 @@ class DisputeRepository(BaseRepository[DisputeMaster]):
         limit: int = 20,
         offset: int = 0,
     ) -> tuple[List[DisputeMaster], int]:
-        from sqlalchemy import func, or_
+        from sqlalchemy import or_
         from src.data.models.postgres.models import DisputeType as DT
         filters = []
         if status:
@@ -215,17 +230,11 @@ class DisputeRepository(BaseRepository[DisputeMaster]):
         if customer_id:
             filters.append(DisputeMaster.customer_id == customer_id)
 
-        base_stmt = select(DisputeMaster).options(
-            selectinload(DisputeMaster.dispute_type)
-        )
+        base_stmt = select(DisputeMaster).options(selectinload(DisputeMaster.dispute_type))
 
-        # Full-text search across customer_id, description, dispute_id, and
-        # dispute_type.reason_name (requires join when search is active)
         if search:
             q = f"%{search}%"
-            base_stmt = base_stmt.outerjoin(
-                DT, DT.dispute_type_id == DisputeMaster.dispute_type_id
-            )
+            base_stmt = base_stmt.outerjoin(DT, DT.dispute_type_id == DisputeMaster.dispute_type_id)
             filters.append(
                 or_(
                     DisputeMaster.customer_id.ilike(q),
@@ -253,8 +262,7 @@ class DisputeRepository(BaseRepository[DisputeMaster]):
 
         stmt = base_stmt.order_by(DisputeMaster.created_at.desc()).limit(limit).offset(offset)
         result = await self.db.execute(stmt)
-        items = list(result.scalars().all())
-        return items, total
+        return list(result.scalars().all()), total
 
     async def get_by_customer(self, customer_id: str) -> List[DisputeMaster]:
         stmt = select(DisputeMaster).where(
@@ -306,10 +314,6 @@ class DisputeAssignmentRepository(BaseRepository[DisputeAssignment]):
         super().__init__(DisputeAssignment, db)
 
         async def has_active_assignment(self, dispute_id: int) -> bool:
-            """
-            Check if a dispute already has an active assignment.
-            Returns True if at least one ACTIVE assignment exists.
-            """
             stmt = (
                 select(func.count(DisputeAssignment.assignment_id))
                 .where(
@@ -320,14 +324,9 @@ class DisputeAssignmentRepository(BaseRepository[DisputeAssignment]):
                 )
             )
             result = await self.db.execute(stmt)
-            count = result.scalar_one()
-            return count > 0
+            return result.scalar_one() > 0
 
     async def get_active_assignment(self, dispute_id: int) -> Optional[DisputeAssignment]:
-        """
-        Get the most recent active assignment for a dispute.
-        If multiple exist (data integrity issue), returns the most recent one.
-        """
         stmt = (
             select(DisputeAssignment)
             .options(selectinload(DisputeAssignment.assignee))
@@ -337,8 +336,8 @@ class DisputeAssignmentRepository(BaseRepository[DisputeAssignment]):
                     DisputeAssignment.status == "ACTIVE",
                 )
             )
-            .order_by(DisputeAssignment.assigned_at.desc())  # ← Most recent first
-            .limit(1)  # ← Only return one
+            .order_by(DisputeAssignment.assigned_at.desc())
+            .limit(1)
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
@@ -372,7 +371,6 @@ class MemoryEpisodeRepository(BaseRepository[DisputeMemoryEpisode]):
         return list(result.scalars().all())
 
     async def count_for_dispute(self, dispute_id: int) -> int:
-        from sqlalchemy import func
         stmt = select(func.count()).where(DisputeMemoryEpisode.dispute_id == dispute_id)
         result = await self.db.execute(stmt)
         return result.scalar_one()
@@ -385,8 +383,105 @@ class MemoryEpisodeRepository(BaseRepository[DisputeMemoryEpisode]):
             .limit(n)
         )
         result = await self.db.execute(stmt)
-        episodes = list(result.scalars().all())
-        return list(reversed(episodes))
+        return list(reversed(result.scalars().all()))
+
+    async def upsert_embedding(self, episode_id: int, embedding: List[float]) -> None:
+        """
+        Save the AI-summary embedding vector into content_embedding for an episode.
+        Called after generate_ai_response produces the ai_summary.
+
+        The vector dimension must match the column type (currently vector(384) for
+        bge-small-en-v1.5). When upgrading models, run the SQL migration first, then
+        update settings.EMBEDDING_DIMS — this method needs no changes.
+        """
+        stmt = (
+            update(DisputeMemoryEpisode)
+            .where(DisputeMemoryEpisode.episode_id == episode_id)
+            .values(content_embedding=embedding)
+        )
+        await self.db.execute(stmt)
+        await self.db.flush()
+
+    async def search_similar_by_customer(
+        self,
+        customer_id: str,
+        query_embedding: List[float],
+        top_k: int = 5,
+        threshold: float = 0.75,
+    ) -> List[dict]:
+        """
+        pgvector cosine similarity search for episodes belonging to a customer.
+
+        Flow:
+          dispute_memory_episode
+            JOIN dispute_master ON dispute_id        ← scopes to this customer
+          WHERE customer_id = :customer_id
+            AND content_embedding IS NOT NULL        ← skip un-embedded episodes
+            AND 1 - (embedding <=> query) >= threshold
+          ORDER BY similarity DESC
+          LIMIT top_k
+
+        Returns a list of dicts:
+          {
+            "episode_id":   int,
+            "dispute_id":   int,
+            "episode_type": str,
+            "actor":        str,
+            "content_text": str,       ← first 400 chars
+            "similarity":   float,     ← cosine similarity 0→1
+            "created_at":  datetime,
+          }
+
+        Threshold guide (cosine similarity):
+          ≥ 0.90  → near-duplicate / same issue re-sent
+          ≥ 0.80  → very likely same dispute topic
+          ≥ 0.75  → probable match (default)
+          ≥ 0.65  → loose / related topic
+        """
+        # Build the vector literal pgvector expects: '[0.1,0.2,...]'
+        vec_literal = "[" + ",".join(str(v) for v in query_embedding) + "]"
+
+        sql = text("""
+            SELECT
+                e.episode_id,
+                e.dispute_id,
+                e.episode_type,
+                e.actor,
+                e.content_text,
+                e.created_at,
+                1 - (e.content_embedding <=> CAST(:vec AS vector)) AS similarity
+            FROM dispute_memory_episode e
+            JOIN dispute_master d ON d.dispute_id = e.dispute_id
+            WHERE d.customer_id   = :customer_id
+              AND e.content_embedding IS NOT NULL
+              AND 1 - (e.content_embedding <=> CAST(:vec AS vector)) >= :threshold
+            ORDER BY similarity DESC
+            LIMIT :top_k
+        """)
+
+        result = await self.db.execute(
+            sql,
+            {
+                "vec":         vec_literal,
+                "customer_id": customer_id,
+                "threshold":   threshold,
+                "top_k":       top_k,
+            },
+        )
+        rows = result.mappings().all()
+
+        return [
+            {
+                "episode_id":   row["episode_id"],
+                "dispute_id":   row["dispute_id"],
+                "episode_type": row["episode_type"],
+                "actor":        row["actor"],
+                "content_text": row["content_text"][:400],
+                "similarity":   round(float(row["similarity"]), 4),
+                "created_at":   row["created_at"],
+            }
+            for row in rows
+        ]
 
 
 class MemorySummaryRepository(BaseRepository[DisputeMemorySummary]):
@@ -459,7 +554,6 @@ class AnalysisSupportingRefRepository(BaseRepository[AnalysisSupportingRef]):
         return list(result.scalars().all())
 
     async def get_by_dispute_via_analysis(self, dispute_id: int) -> List[AnalysisSupportingRef]:
-        """Return all supporting refs for all analyses of a dispute."""
         stmt = (
             select(AnalysisSupportingRef)
             .join(DisputeAIAnalysis, AnalysisSupportingRef.analysis_id == DisputeAIAnalysis.analysis_id)
@@ -476,10 +570,6 @@ class AnalysisSupportingRefRepository(BaseRepository[AnalysisSupportingRef]):
         ref_id_value: int,
         context_note: str,
     ) -> AnalysisSupportingRef:
-        """
-        Create or update a supporting ref. If a row for (analysis_id, reference_table, ref_id_value)
-        already exists, update the context_note.
-        """
         stmt = select(AnalysisSupportingRef).where(
             and_(
                 AnalysisSupportingRef.analysis_id == analysis_id,

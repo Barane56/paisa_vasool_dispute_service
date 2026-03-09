@@ -303,7 +303,7 @@ class DisputeMemoryEpisode(Base):
     episode_type      = Column(String(50), nullable=False)
     actor             = Column(String(50), nullable=False)
     content_text      = Column(Text, nullable=False)
-    content_embedding = Column(VECTOR(1536), nullable=True)
+    content_embedding = Column(VECTOR(384), nullable=True)
     email_id          = Column(Integer, ForeignKey("email_inbox.email_id", ondelete="SET NULL"), nullable=True)
     created_at        = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 

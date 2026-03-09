@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     GROQ_MODEL: str = "llama-3.3-70b-versatile"          # chat/classify/respond
     GROQ_INVOICE_MODEL: str = "llama-3.3-70b-versatile"   # invoice data extraction
 
-    GOOGLE_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.0-flash"
     GEMINI_INVOICE_MODEL: str = "gemini-2.0-flash"
 
@@ -49,6 +49,10 @@ class Settings(BaseSettings):
 
     # Memory / summarization threshold
     EPISODE_SUMMARIZE_THRESHOLD: int = 10
+
+    EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
+    EMBEDDING_DIMS: int = 384
+    EPISODE_SIMILARITY_THRESHOLD: float = 0.75
 
     class Config:
         env_file = ".env"

@@ -44,6 +44,63 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 styles = getSampleStyleSheet()
 
 # =============================================================================
+# DEFAULT DISPUTE TYPES  (10 seed types — AI dynamically adds more on the go)
+# =============================================================================
+
+DISPUTE_TYPES = [
+    {
+        "reason_name":    "Pricing Mismatch",
+        "description":    "Customer claims the price charged differs from the agreed or quoted price.",
+        "severity_level": "HIGH",
+    },
+    {
+        "reason_name":    "Short Payment",
+        "description":    "Customer has paid less than the invoiced amount without prior agreement.",
+        "severity_level": "HIGH",
+    },
+    {
+        "reason_name":    "Duplicate Invoice",
+        "description":    "Customer believes they have been billed twice for the same goods or services.",
+        "severity_level": "HIGH",
+    },
+    {
+        "reason_name":    "Tax Dispute",
+        "description":    "Customer disputes the tax rate, tax amount, or tax exemption applied on the invoice.",
+        "severity_level": "MEDIUM",
+    },
+    {
+        "reason_name":    "Payment Not Reflected",
+        "description":    "Customer claims payment was made but it has not been applied to the invoice on record.",
+        "severity_level": "HIGH",
+    },
+    {
+        "reason_name":    "Goods Not Received",
+        "description":    "Customer disputes the invoice because the goods or services were not delivered.",
+        "severity_level": "HIGH",
+    },
+    {
+        "reason_name":    "Quality Dispute",
+        "description":    "Customer received goods or services but disputes the quality or completeness of delivery.",
+        "severity_level": "MEDIUM",
+    },
+    {
+        "reason_name":    "Early Payment Discount",
+        "description":    "Customer claims an early payment discount was applicable but was not reflected on the invoice.",
+        "severity_level": "MEDIUM",
+    },
+    {
+        "reason_name":    "General Clarification",
+        "description":    "General inquiries and clarification requests that do not constitute a formal dispute.",
+        "severity_level": "LOW",
+    },
+    {
+        "reason_name":    "Payment Terms Dispute",
+        "description":    "Customer disputes the payment due date, credit period, or agreed payment terms on the invoice.",
+        "severity_level": "MEDIUM",
+    },
+]
+
+# =============================================================================
 # INVOICES  (10 diverse invoices across industries / currencies)
 # =============================================================================
 
@@ -1127,6 +1184,32 @@ async def seed_database():
     AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with AsyncSessionLocal() as session:
+        print("\nSeeding dispute types...")
+        for dt in DISPUTE_TYPES:
+            result = await session.execute(
+                text("SELECT dispute_type_id FROM dispute_type WHERE reason_name = :name"),
+                {"name": dt["reason_name"]},
+            )
+            if result.fetchone():
+                print(f"  DisputeType '{dt['reason_name']}' already exists, skipping.")
+                continue
+
+            await session.execute(
+                text("""
+                    INSERT INTO dispute_type (reason_name, description, severity_level, is_active)
+                    VALUES (:reason_name, :description, :severity_level, true)
+                """),
+                {
+                    "reason_name":    dt["reason_name"],
+                    "description":    dt["description"],
+                    "severity_level": dt["severity_level"],
+                },
+            )
+            print(f"  DisputeType '{dt['reason_name']}' [{dt['severity_level']}] inserted")
+
+        await session.commit()
+        print(f"  {len(DISPUTE_TYPES)} default dispute types seeded (AI will add more dynamically)")
+
         print("\nSeeding invoices...")
         for inv in INVOICES:
             result = await session.execute(
