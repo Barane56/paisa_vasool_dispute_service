@@ -48,7 +48,7 @@ def build_generate_response_prompt(
     context = {
         "subject":               subject,
         "sender_email":          sender_email,
-        "body_text":             body_text[:1200],
+        "body_text":             body_text,
         "invoice_ctx":           json.dumps(invoice_details or {}, indent=2),
         "payment_ctx":           json.dumps(all_payment_details, indent=2) if all_payment_details else "No payment records on file",
         "memory_ctx":            memory_summary or "No previous conversation on record",

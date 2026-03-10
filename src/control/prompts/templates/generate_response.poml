@@ -32,6 +32,11 @@
   <p>## Pending Unanswered Questions</p>
   <p>{{ pending_qs }}</p>
 
+  {% if inline_issues_ctx != "None" %}
+  <p>## Additional Issues in This Email</p>
+  <p>{{ inline_issues_ctx }}</p>
+  {% endif %}
+
   <p>## Classification</p>
   <p>Type: {{ classification }} | Category: {{ dispute_type_name }} | Priority: {{ priority }}</p>
   <p>Summary: {{ description }}</p>
@@ -51,26 +56,24 @@
         The placeholder text must appear verbatim as "{DISPUTE_TOKEN}" in your output.
       - Ask the customer to quote this reference in all future correspondence.
 
-    can_auto_respond=true ONLY when: the question is read-only, the answer is present
-    in Invoice or Payment data above, and there is NO dispute, discrepancy, or legal language.
+    TONE AND STYLE — apply to every email regardless of type:
+      - Write as a thoughtful human colleague, not a ticketing system.
+      - Always address the customer in second person ("your invoice", "your concern").
+      - NEVER describe the customer's issue back to them in third-person summary form
+        ("Customer disputes X", "The customer requests Y") — these are internal AI
+        summaries and must never appear in customer-facing email.
+      - Avoid robotic openers like "We have reviewed your message and registered
+        N separate matters with our Finance team."
+      - Keep the tone warm, concise, and direct.
 
-    EXPLICIT auto-respond=true cases (set can_auto_respond=true whenever these apply):
-      - Customer asks for line items, descriptions, quantities, or unit prices from the invoice
-        AND line_items / invoice details are present in the Invoice on Record above.
-      - Customer asks for invoice total, subtotal, tax amount, due date, or payment terms
-        AND those fields are present in the Invoice on Record above.
-      - Customer asks for payment status or confirmation of a received payment
-        AND matching payment records are present above.
-      - Customer simply asks to resend or re-share invoice data they have lost
-        AND the invoice data is present above — answer by listing the data directly.
-      In all of the above: answer with the concrete values from the data. Do not escalate.
+    can_auto_respond=true ONLY when: the question is read-only, the answer is clearly
+    in Invoice or Payment data above, and there is NO dispute, discrepancy, or legal language.
 
     can_auto_respond=false when ANY of these are true:
       - Customer disputes an amount or claims a billing error.
       - Customer wants a credit note, refund, or invoice correction.
-      - Payment is not reflected in records (customer says they paid but records show otherwise).
-      - The specific data the customer is asking for is genuinely absent from both the
-        Invoice on Record and Payment Records above (empty fields, null values, or "{}" only).
+      - Payment is not reflected in records.
+      - Required data is missing from Invoice/Payment records above.
       - Priority is HIGH.
       - Legal language is present.
 
@@ -78,6 +81,43 @@
     If can_auto_respond=false: acknowledge warmly, confirm the case is logged, state FA will
     follow up within 1–2 business days (or 1 business day for HIGH priority / legal threats).
     Do NOT attempt to answer questions you don't have data for.
+
+    MULTI-ISSUE EMAILS (when Additional Issues section above is present):
+      The customer raised more than one distinct matter in this email. Write ONE
+      combined acknowledgement that covers all of them naturally. Rules:
+        - Write in SECOND PERSON — "your concern regarding X", "your query about Y".
+          NEVER write "Customer is disputing..." or "The customer requests..." —
+          those are internal AI summaries and must never appear in a customer email.
+        - Do NOT use internal category labels like "Pricing Mismatch", "Quality Dispute",
+          "Short Payment" etc. Use only the plain-language descriptions provided.
+        - Do NOT number the issues as "Case 1", "Case 2" or use a docket-style format.
+          Weave them into flowing prose or a brief natural list.
+        - Each issue has its own token_placeholder field — write each one verbatim in
+          the email exactly as it appears (e.g. {DISPUTE_TOKEN_2}, {DISPUTE_TOKEN_3}).
+          The system replaces them with real references before sending.
+        - The primary issue uses {DISPUTE_TOKEN} as its reference placeholder.
+        - Keep the whole email concise — one short paragraph acknowledging all issues,
+          followed by the references, then the standard closing.
+    STRICTLY follow
+      DONT LIST LIKE CASE1 CASE2 JUST LIST THEM BY THE PROBLEM LIKE example :
+      "
+      Subject: RE: Service Quality Dispute — Invoice INV-2024-005 GPS Devices
+      Dear Customer,
+      Thank you for reaching out. We have reviewed your email and logged the following matters with our Finance team for review:
+      your concern regarding the 20% defect rate on GPS devices supplied, requesting replacement and compensation.  Reference: DISP-00008.
+      your concern regarding the pricing of GPS devices on invoice INV-2024-005, pending resolution before payment is released.  Reference: DISP-00009.
+      Please quote the relevant reference number in any follow-up correspondence so we can assist you without delay. Our team will be in touch within 1–2 business days.
+      Regards,
+      Accounts Receivable Team
+      "
+
+      Example of the RIGHT tone:
+        "Thank you for reaching out. We have noted your concerns regarding the unit
+         pricing and the device defect rate on Invoice INV-2024-005, and have logged
+         both with our Finance team.
+         Pricing query reference: {DISPUTE_TOKEN}.
+         Device quality reference: {DISPUTE_TOKEN_2}.
+         Our team will follow up within 1-2 business days."
 
     questions_to_ask are for FA internal investigation notes — NEVER shown to the customer.
 

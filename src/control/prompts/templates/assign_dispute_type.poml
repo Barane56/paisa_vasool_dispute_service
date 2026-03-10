@@ -7,7 +7,8 @@
 
   <task>
     Assign a dispute type to the issue described below.
-    Pick the closest match from the available types.
+    Pick the closest match from the available types, the closet match should be highly 
+    relatable to the assigning.
     Only suggest a new type if absolutely nothing fits.
   </task>
 
