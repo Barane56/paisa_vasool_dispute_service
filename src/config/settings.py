@@ -38,7 +38,6 @@ class Settings(BaseSettings):
 
     # Embeddings – Groq doesn't do embeddings; use a lightweight local model or
     # a separate provider. For now we skip real embeddings (store None).
-    EMBEDDING_DIMENSIONS: int = 1536
 
     # CORS
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
@@ -55,8 +54,8 @@ class Settings(BaseSettings):
     LANGFUSE_SECRET_KEY: str = ""
     LANGFUSE_BASE_URL: str = "https://cloud.langfuse.com"
 
-    EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
-    EMBEDDING_DIMS: int = 384
+    EMBEDDING_MODEL: str = "BAAI/bge-base-en-v1.5"
+    EMBEDDING_DIMS: int = 768
     EPISODE_SIMILARITY_THRESHOLD: float = 0.75
 
     class Config:
