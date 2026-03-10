@@ -1,13 +1,10 @@
-FROM python:3.12-slim
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc && \
-    rm -rf /var/lib/apt/lists/*
 
-COPY requirements/base.txt requirements/base.txt
-RUN pip install --no-cache-dir -r requirements/base.txt
+COPY requirements/requirements.txt requirements/requirements.txt
+RUN pip install --no-cache-dir -r requirements/requirements.txt
 
 COPY . .
 
