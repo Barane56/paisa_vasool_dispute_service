@@ -210,6 +210,12 @@ class DisputeRepository(BaseRepository[DisputeMaster]):
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_dispute_token(self, token: str) -> Optional[DisputeMaster]:
+        """Layer 1 match: look up dispute by its unique DISP-XXXXX token."""
+        stmt = select(DisputeMaster).where(DisputeMaster.dispute_token == token)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_filtered(
         self,
         status: Optional[str] = None,
@@ -602,3 +608,62 @@ class AnalysisSupportingRefRepository(BaseRepository[AnalysisSupportingRef]):
         await self.db.delete(ref)
         await self.db.flush()
         return True
+
+class DisputeRelationshipRepository(BaseRepository):
+    """
+    Manages explicit relationships between disputes (forks, batches, escalations).
+    """
+
+    def __init__(self, db: AsyncSession):
+        from src.data.models.postgres.models import DisputeRelationship
+        super().__init__(DisputeRelationship, db)
+
+    async def create(
+        self,
+        source_dispute_id: int,
+        target_dispute_id: int,
+        relationship_type: str,
+        context_note: Optional[str] = None,
+        created_by: str = "SYSTEM",
+    ):
+        from src.data.models.postgres.models import DisputeRelationship
+        rel = DisputeRelationship(
+            source_dispute_id=source_dispute_id,
+            target_dispute_id=target_dispute_id,
+            relationship_type=relationship_type,
+            context_note=context_note,
+            created_by=created_by,
+        )
+        self.db.add(rel)
+        await self.db.flush()
+        return rel
+
+    async def get_related_disputes(self, dispute_id: int) -> List:
+        from src.data.models.postgres.models import DisputeRelationship
+        from sqlalchemy import or_
+        stmt = (
+            select(DisputeRelationship)
+            .where(
+                or_(
+                    DisputeRelationship.source_dispute_id == dispute_id,
+                    DisputeRelationship.target_dispute_id == dispute_id,
+                )
+            )
+            .order_by(DisputeRelationship.created_at.desc())
+        )
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
+
+    async def relationship_exists(self, source_id: int, target_id: int) -> bool:
+        from src.data.models.postgres.models import DisputeRelationship
+        from sqlalchemy import or_, and_
+        stmt = select(DisputeRelationship).where(
+            or_(
+                and_(DisputeRelationship.source_dispute_id == source_id,
+                     DisputeRelationship.target_dispute_id == target_id),
+                and_(DisputeRelationship.source_dispute_id == target_id,
+                     DisputeRelationship.target_dispute_id == source_id),
+            )
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none() is not None

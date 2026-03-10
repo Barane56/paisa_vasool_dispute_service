@@ -59,6 +59,12 @@ async def node_fetch_context(
                 **db_details,
                 **{k: v for k, v in groq_data.items() if v is not None},
             }
+            # Explicitly hoist line_items to the top level so the LLM prompt
+            # can see them directly rather than having to dig through the blob.
+            # If line_items is absent or empty, set an explicit marker so the
+            # LLM knows the data is missing (not just not shown).
+            if not invoice_details.get("line_items"):
+                invoice_details["line_items"] = None  # explicit missing signal
 
     # ── All payment records for this invoice ─────────────────────────────────
     if state.get("matched_payment_ids"):

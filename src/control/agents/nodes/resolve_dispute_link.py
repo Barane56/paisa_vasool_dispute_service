@@ -16,10 +16,21 @@ async def node_resolve_dispute_link(
     state: EmailProcessingState, db_session=None
 ) -> EmailProcessingState:
     """
+    Scenario T — Token match (Layer 1) → already resolved upstream, pass through.
     Scenario A — Invoice matched → pass through, context already correct.
     Scenario B — No invoice but embedding matched → reload memory from matched dispute.
-    Scenario C — No invoice, no match → set _needs_invoice_details=True.
+    Scenario C — No invoice, no match → set _needs_invoice_details=True but still create dispute + assign FA.
     """
+    # ── Scenario T (Token already matched upstream) ───────────────────────────
+    if state.get("token_matched_dispute_id"):
+        logger.info(
+            f"[email_id={state['email_id']}] resolve: Scenario T — "
+            f"token matched dispute_id={state['token_matched_dispute_id']}"
+        )
+        langfuse_context.update_current_observation(
+            output={"scenario": "T", "dispute_id": state["token_matched_dispute_id"]}
+        )
+        return {**state, "_needs_invoice_details": False}
     invoice_matched   = state.get("matched_invoice_id") is not None
     embedding_matched = state.get("embedding_matched", False)
 
@@ -77,11 +88,12 @@ async def node_resolve_dispute_link(
     # ── Scenario C ────────────────────────────────────────────────────────────
     logger.info(
         f"[email_id={state['email_id']}] resolve: Scenario C — "
-        f"no invoice, no embedding match → ask customer for invoice details"
+        f"no invoice, no token, no embedding match → "
+        f"will create dispute, assign FA, and ask customer for invoice details"
     )
     langfuse_context.update_current_observation(output={"scenario": "C"})
     return {
         **state,
         "existing_dispute_id":    None,
-        "_needs_invoice_details": True,
+        "_needs_invoice_details": True,   # triggers invoice-request email + FA note
     }

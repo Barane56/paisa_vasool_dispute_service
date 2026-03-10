@@ -25,7 +25,10 @@ def _regex_invoice_numbers(text: str) -> List[str]:
         r"(?:inv[\.#\-/]*)([\w\-/]{4,20})",
         r"(?:bill\s*(?:no\.?|number|#)[:\s#-]*)([\w\-/]+)",
         r"(?:reference\s*(?:no\.?|number|#|:)\s*)([\w\-/]{4,20})",
-        r"\b(INV[-/]?\d{3,10})\b",
+        # Matches full INV-YYYY-NNN style numbers (e.g. INV-2024-004, INV/2024/015).
+        # The old pattern \b(INV[-/]?\d{3,10})\b stopped at the first digit group,
+        # turning INV-2024-004 into INV-2024 and missing the DB lookup entirely.
+        r"\b(INV[-/]?[\d][\d\-/]{2,15})\b",
         r"(?:invoice|inv)\D{0,10}(\d{4,8})\b",
     ]
     for pat in patterns:

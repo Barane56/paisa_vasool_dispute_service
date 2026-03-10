@@ -221,6 +221,9 @@ class DisputeMaster(Base):
     status            = Column(String(50), nullable=False)
     priority          = Column(String(20), nullable=False, default="MEDIUM", server_default="MEDIUM")
     description       = Column(Text, nullable=False)
+    dispute_token     = Column(String(32), unique=True, nullable=True)  # e.g. DISP-00042 for cross-thread matching
+    # Self-referential FK: set when this dispute was forked out of an ongoing conversation
+    parent_dispute_id = Column(Integer, ForeignKey("dispute_master.dispute_id", ondelete="SET NULL", use_alter=True, name="fk_dispute_master_parent_id"), nullable=True)
     created_at        = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at        = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -236,6 +239,11 @@ class DisputeMaster(Base):
     open_questions = relationship("DisputeOpenQuestion",  back_populates="dispute",            lazy="select", cascade="all, delete-orphan")
     activity_logs  = relationship("DisputeActivityLog",   back_populates="dispute",            lazy="select", cascade="all, delete-orphan")
     status_history = relationship("DisputeStatusHistory", back_populates="dispute",            lazy="select", cascade="all, delete-orphan")
+    # Relationships for context-shift forking
+    forked_disputes = relationship("DisputeMaster",        foreign_keys="DisputeMaster.parent_dispute_id", lazy="select", back_populates="parent_dispute")
+    parent_dispute  = relationship("DisputeMaster",        foreign_keys=[parent_dispute_id],               lazy="select", back_populates="forked_disputes", remote_side="DisputeMaster.dispute_id")
+    relationships_as_source = relationship("DisputeRelationship", foreign_keys="DisputeRelationship.source_dispute_id", back_populates="source_dispute", lazy="select", cascade="all, delete-orphan")
+    relationships_as_target = relationship("DisputeRelationship", foreign_keys="DisputeRelationship.target_dispute_id", back_populates="target_dispute", lazy="select", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_dispute_master_customer_id",     "customer_id"),
@@ -243,6 +251,7 @@ class DisputeMaster(Base):
         Index("ix_dispute_master_priority",        "priority"),
         Index("ix_dispute_master_dispute_type_id", "dispute_type_id"),
         Index("ix_dispute_master_created_at",      "created_at"),
+        Index("ix_dispute_master_parent_dispute_id", "parent_dispute_id"),
     )
 
 
@@ -435,4 +444,38 @@ class DisputeStatusHistory(Base):
         Index("ix_status_history_dispute_id",   "dispute_id"),
         Index("ix_status_history_performed_by", "performed_by"),
         Index("ix_status_history_created_at",   "created_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dispute Relationship
+# ---------------------------------------------------------------------------
+# Tracks explicit relationships between disputes created during a conversation:
+#   FORKED_FROM      — this dispute was split out of an ongoing dispute thread
+#   SAME_CUSTOMER_BATCH — multiple disputes raised in a single email
+#   ESCALATION_OF    — this dispute is a formal escalation of another
+#   RELATED          — general linkage (FA-created)
+# ---------------------------------------------------------------------------
+class DisputeRelationship(Base):
+    __tablename__ = "dispute_relationship"
+
+    relationship_id   = Column(Integer, primary_key=True)
+    source_dispute_id = Column(Integer, ForeignKey("dispute_master.dispute_id", ondelete="CASCADE"),  nullable=False)
+    target_dispute_id = Column(Integer, ForeignKey("dispute_master.dispute_id", ondelete="CASCADE"),  nullable=False)
+    relationship_type = Column(
+        Enum("FORKED_FROM", "SAME_CUSTOMER_BATCH", "ESCALATION_OF", "RELATED",
+             name="dispute_relationship_type"),
+        nullable=False,
+    )
+    context_note      = Column(Text, nullable=True)   # LLM-generated reason for the fork
+    created_by        = Column(String(20), nullable=False, default="SYSTEM")  # SYSTEM | FA
+    created_at        = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    source_dispute = relationship("DisputeMaster", foreign_keys=[source_dispute_id], back_populates="relationships_as_source", lazy="joined")
+    target_dispute = relationship("DisputeMaster", foreign_keys=[target_dispute_id], back_populates="relationships_as_target", lazy="joined")
+
+    __table_args__ = (
+        Index("ix_dispute_rel_source", "source_dispute_id"),
+        Index("ix_dispute_rel_target", "target_dispute_id"),
+        Index("ix_dispute_rel_type",   "relationship_type"),
     )

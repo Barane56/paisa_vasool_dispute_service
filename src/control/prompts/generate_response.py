@@ -8,7 +8,7 @@ from typing import List, Dict, Optional
 from poml import poml as render_poml
 
 PROMPT_NAME    = "generate_ar_response"
-PROMPT_VERSION = "1.0"
+PROMPT_VERSION = "2.0"
 _TEMPLATE = str(Path(__file__).parent / "templates" / "generate_response.poml")
 
 
@@ -25,20 +25,24 @@ def build_generate_response_prompt(
     dispute_type_name: str,
     priority: str,
     description: str,
+    dispute_token: Optional[str] = None,
+    inline_issues_summary: str = "",
 ) -> str:
     context = {
-        "subject":           subject,
-        "sender_email":      sender_email,
-        "body_text":         body_text[:800],
-        "invoice_ctx":       json.dumps(invoice_details or {}, indent=2),
-        "payment_ctx":       json.dumps(all_payment_details, indent=2) if all_payment_details else "No payment records on file",
-        "memory_ctx":        memory_summary or "No previous conversation on record",
-        "recent_eps":        json.dumps(recent_episodes[:4], indent=2),
-        "pending_qs":        json.dumps(pending_questions, indent=2) if pending_questions else "None",
-        "classification":    classification,
-        "dispute_type_name": dispute_type_name,
-        "priority":          priority,
-        "description":       description,
+        "subject":               subject,
+        "sender_email":          sender_email,
+        "body_text":             body_text[:1200],
+        "invoice_ctx":           json.dumps(invoice_details or {}, indent=2),
+        "payment_ctx":           json.dumps(all_payment_details, indent=2) if all_payment_details else "No payment records on file",
+        "memory_ctx":            memory_summary or "No previous conversation on record",
+        "recent_eps":            json.dumps(recent_episodes[:4], indent=2),
+        "pending_qs":            json.dumps(pending_questions, indent=2) if pending_questions else "None",
+        "classification":        classification,
+        "dispute_type_name":     dispute_type_name,
+        "priority":              priority,
+        "description":           description,
+        "dispute_token":         dispute_token or "{DISPUTE_TOKEN}",
+        "inline_issues_summary": inline_issues_summary,
     }
 
     messages = render_poml(_TEMPLATE, context)

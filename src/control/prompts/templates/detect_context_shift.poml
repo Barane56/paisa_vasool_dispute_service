@@ -1,0 +1,87 @@
+<poml>
+  <role>
+    You are an AR (Accounts Receivable) conversation analyst.
+    Your job is to determine whether a customer follow-up email is continuing
+    an existing dispute or introducing a NEW, SEPARATE issue that must be
+    tracked independently.
+  </role>
+
+  <task>
+    Analyse the incoming email against the active dispute context below.
+    Decide if the email stays within the same dispute scope or signals a
+    context shift that requires forking into one or more new disputes.
+  </task>
+
+  <p>## Active Dispute</p>
+  <p>Dispute ID    : {{ existing_dispute_id }}</p>
+  <p>Invoice       : {{ existing_invoice_number }}</p>
+  <p>Dispute Type  : {{ existing_dispute_type }}</p>
+  <p>Description   : {{ existing_description }}</p>
+  <p>Status        : {{ existing_status }}</p>
+
+  <p>## Recent Conversation Episodes</p>
+  <p>{{ recent_episodes }}</p>
+
+  <p>## Incoming Email</p>
+  <p>Subject : {{ subject }}</p>
+  <p>From    : {{ sender_email }}</p>
+  <p>{{ body_text }}</p>
+
+  {% if new_invoice_number %}
+  <p>New invoice number detected by extraction: {{ new_invoice_number }}</p>
+  {% endif %}
+
+  <hint>
+    A NEW dispute should be created (is_context_shift=true) when ANY of these are true:
+      1. A different invoice number is referenced (not the same as existing_invoice_number).
+      2. The issue type is fundamentally different (e.g. existing=Pricing Mismatch, new=Non-Payment).
+      3. The customer explicitly signals a separate matter using phrases like:
+         "separate issue", "another matter", "unrelated to the above", "also", "additionally".
+      4. A new PO number or contract reference appears with no relation to the existing dispute.
+      5. The email raises multiple distinct issues spanning different invoices.
+
+    It is NOT a new dispute when:
+      - Customer provides more evidence or documents for the existing issue.
+      - Customer follows up on progress / status of the same dispute.
+      - Customer corrects or adds detail to their original claim.
+      - The same invoice is mentioned with an additional related complaint.
+      - Customer is directly responding to a question asked by the FA.
+      - The tone escalates but the subject matter is identical.
+
+    When is_context_shift=true, populate new_issues with ONE entry per distinct new dispute.
+    Each new_issues entry must have:
+      - new_dispute_invoice_number : the invoice number for that new issue, or null if unclear
+      - new_dispute_type_hint      : most likely dispute type name
+      - new_dispute_description    : 2-3 sentences describing the new issue
+      - priority                   : "LOW", "MEDIUM", or "HIGH"
+      - context_note               : 1-2 sentences explaining why this is a separate dispute (for audit trail)
+
+    original_dispute_still_active must be true when the email ALSO contains
+    content relevant to the existing dispute (mixed email case).
+
+    reasoning must be a brief explanation of your overall decision.
+
+    confidence reflects how certain you are: 1.0 = very clear, 0.5 = borderline, 0.0 = no idea.
+
+    Return ONLY valid JSON, no markdown, no extra text.
+  </hint>
+
+  <p>## Output Format</p>
+  <p>Return ONLY valid JSON:
+  {
+    "is_context_shift"              : true or false,
+    "confidence"                    : 0.0 to 1.0,
+    "new_issues"                    : [
+      {
+        "new_dispute_invoice_number" : "INV-5678 or null",
+        "new_dispute_type_hint"      : "string",
+        "new_dispute_description"    : "2-3 sentence description",
+        "priority"                   : "LOW" or "MEDIUM" or "HIGH",
+        "context_note"               : "why this is a separate dispute"
+      }
+    ],
+    "original_dispute_still_active" : true or false,
+    "reasoning"                     : "brief explanation"
+  }
+  </p>
+</poml>

@@ -2,13 +2,14 @@
   <role>
     You are an AR (Accounts Receivable) dispute classification expert.
     You read incoming customer emails about invoices and payments and
-    classify them accurately using the available dispute types.
+    identify distinct disputes — but you default heavily to ONE dispute
+    unless the separation is unmistakable.
   </role>
 
   <task>
-    Classify the customer email below. Identify whether it is a DISPUTE
-    or a CLARIFICATION, assign the most appropriate dispute type, set the
-    priority, and write a concise description of what the customer wants.
+    Analyse the customer email below. Classify it as a single dispute or
+    clarification. Return additional issues ONLY when the hard rules below
+    are met. When in doubt, always return additional_issues = [].
   </task>
 
   <p>## Customer Email</p>
@@ -26,15 +27,61 @@
   <p>{{ dispute_types }}</p>
 
   <hint>
-    classification must be exactly "DISPUTE" or "CLARIFICATION".
-    dispute_type_name must be picked from Available Dispute Types, or a new name if none fit.
-    If suggesting a new type set is_new_type to true and fill new_type_description and new_type_severity.
-    priority must be "LOW", "MEDIUM", or "HIGH".
-    description must be 2-3 sentences summarising what the customer wants.
+    THE ONLY TIME you may add an entry to additional_issues is when ALL THREE
+    conditions are true simultaneously:
+      A. The customer references a DIFFERENT invoice number (not the same INV-XXXX).
+      B. The problem on that different invoice is unrelated to the primary issue.
+      C. The customer would need to contact a different team or FA to resolve it.
+
+    If ANY of these is false → additional_issues = [].
+
+    ALWAYS produce additional_issues = [] in these situations (no exceptions):
+      • All questions/issues are about the same invoice number.
+      • The email is a clarification or status check (even with multiple numbered points).
+      • Numbered or bulleted lists (1., 2., 3.) where all items relate to the same
+        invoice or the same underlying payment event — numbered formatting is NOT
+        the same as separate disputes.
+      • Questions about the same contract, PO, or project milestone.
+      • Pre-payment conditions or document requests before releasing a payment.
+      • Any mix of contract/delivery/documentation/warranty questions on one invoice.
+      • The customer says "once these are clarified we will release payment" —
+        all clarification points are part of ONE dispute, not many.
+
+    CLASSIFICATION guide:
+      CLARIFICATION — customer is asking questions, seeking information, or requesting
+        documents before they will pay. No money is being withheld due to a billing error.
+      DISPUTE — customer is actively rejecting a charge, claiming overbilling, or refusing
+        payment because of an error in the invoice itself.
+
+    For the primary issue:
+      - classification: "DISPUTE" or "CLARIFICATION"
+      - dispute_type_name: pick from Available Dispute Types; "General Clarification"
+        is always acceptable when nothing fits precisely — do NOT invent granular types
+        just to match specific question topics.
+      - is_new_type: true ONLY if the email represents an entirely novel category not
+        covered by any existing type AND it is clearly a DISPUTE, not a clarification.
+        Set is_new_type=false for clarification emails.
+      - priority: "LOW", "MEDIUM", or "HIGH"
+      - description: 2-3 sentences summarising the WHOLE email in one go, not per question.
+      - invoice_number: the invoice referenced, or null
+      - disputed_amount: the amount withheld/disputed, or null
+
     Return ONLY valid JSON with no markdown and no extra text.
   </hint>
 
   <p>## Output Format</p>
-  <p>Return ONLY valid JSON:</p>
-  <p>{ "classification": "DISPUTE" or "CLARIFICATION", "dispute_type_name": "string", "is_new_type": true or false, "new_type_description": "string or null", "new_type_severity": "LOW" or "MEDIUM" or "HIGH", "priority": "LOW" or "MEDIUM" or "HIGH", "description": "2-3 sentence summary" }</p>
+  <p>Return ONLY valid JSON:
+  {
+    "classification":        "DISPUTE" or "CLARIFICATION",
+    "dispute_type_name":     "string",
+    "is_new_type":           false,
+    "new_type_description":  null,
+    "new_type_severity":     "MEDIUM",
+    "priority":              "LOW" or "MEDIUM" or "HIGH",
+    "description":           "2-3 sentence summary of the whole email",
+    "invoice_number":        "INV-XXXX or null",
+    "disputed_amount":       "INR X,XX,XXX or null",
+    "additional_issues":     []
+  }
+  </p>
 </poml>

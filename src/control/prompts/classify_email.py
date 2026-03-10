@@ -8,7 +8,7 @@ from typing import List, Dict, Optional
 from poml import poml as render_poml
 
 PROMPT_NAME    = "classify_email"
-PROMPT_VERSION = "1.0"
+PROMPT_VERSION = "2.0"
 _TEMPLATE = str(Path(__file__).parent / "templates" / "classify_email.poml")
 
 
@@ -28,8 +28,8 @@ def build_classify_prompt(
     context = {
         "subject":         subject,
         "sender_email":    sender_email,
-        "body_text":       body_text[:1000],
-        "attachment_text": " ".join(attachment_texts)[:500],
+        "body_text":       body_text[:2000],   # increased from 1000 — multi-issue emails are longer
+        "attachment_text": " ".join(attachment_texts)[:800],
         "groq_extracted":  json.dumps(groq_extracted) if groq_extracted else "",
         "dispute_types":   types_block,
     }
