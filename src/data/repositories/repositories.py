@@ -319,18 +319,18 @@ class DisputeAssignmentRepository(BaseRepository[DisputeAssignment]):
     def __init__(self, db: AsyncSession):
         super().__init__(DisputeAssignment, db)
 
-        async def has_active_assignment(self, dispute_id: int) -> bool:
-            stmt = (
-                select(func.count(DisputeAssignment.assignment_id))
-                .where(
-                    and_(
-                        DisputeAssignment.dispute_id == dispute_id,
-                        DisputeAssignment.status == "ACTIVE",
-                    )
+    async def has_active_assignment(self, dispute_id: int) -> bool:
+        stmt = (
+            select(func.count(DisputeAssignment.assignment_id))
+            .where(
+                and_(
+                    DisputeAssignment.dispute_id == dispute_id,
+                    DisputeAssignment.status == "ACTIVE",
                 )
             )
-            result = await self.db.execute(stmt)
-            return result.scalar_one() > 0
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one() > 0
 
     async def get_active_assignment(self, dispute_id: int) -> Optional[DisputeAssignment]:
         stmt = (
