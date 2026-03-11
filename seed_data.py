@@ -351,6 +351,98 @@ INVOICES = [
             "po_reference": "PO-GMH-2024-Q4-010",
         },
     },
+
+    # 11. Acme Corp — Networking equipment (clean invoice, fully paid)
+    {
+        "invoice_number": "INV-2024-011",
+        "invoice_url": "https://storage.example.com/invoices/INV-2024-011.pdf",
+        "invoice_details": {
+            "invoice_number": "INV-2024-011",
+            "invoice_date": "2026-01-15",
+            "due_date": "2026-02-14",
+            "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
+            "customer_name": "Acme Corp",
+            "customer_id": "acme",
+            "billing_address": "Acme Corp, Powai, Mumbai — 400 076",
+            "gstin": "27AABCA1234F1Z5",
+            "line_items": [
+                {"description": "Network Switch 48-Port (Cisco Catalyst 2960)", "qty": 4, "unit_price": 85000.00, "total": 340000.00, "hsn": "8517"},
+                {"description": "Patch Cables CAT6 (box of 50)", "qty": 10, "unit_price": 3500.00, "total": 35000.00},
+                {"description": "Rack Mounting Hardware (set)", "qty": 4, "unit_price": 2500.00, "total": 10000.00},
+            ],
+            "subtotal": 385000.00,
+            "tax_rate_pct": 18,
+            "tax_amount": 69300.00,
+            "total_amount": 454300.00,
+            "currency": "INR",
+            "payment_terms": "Net 30",
+            "po_reference": "PO-ACME-2026-001",
+        },
+    },
+
+    # 12. Acme Corp — IT Equipment, GST exemption not applied (HSN 8471)
+    {
+        "invoice_number": "INV-2024-012",
+        "invoice_url": "https://storage.example.com/invoices/INV-2024-012.pdf",
+        "invoice_details": {
+            "invoice_number": "INV-2024-012",
+            "invoice_date": "2026-02-20",
+            "due_date": "2026-03-22",
+            "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
+            "customer_name": "Acme Corp",
+            "customer_id": "acme",
+            "billing_address": "Acme Corp, Andheri East, Mumbai — 400 069",
+            "gstin": "27AABCA1234F1Z5",
+            "line_items": [
+                {"description": "Laptop Dell Latitude 5540 (HSN 8471)", "qty": 10, "unit_price": 82000.00, "total": 820000.00, "hsn": "8471"},
+                {"description": "Laptop Docking Station (HSN 8471)", "qty": 10, "unit_price": 8000.00, "total": 80000.00, "hsn": "8471"},
+                {"description": "Extended Warranty 3-Year", "qty": 10, "unit_price": 5000.00, "total": 50000.00},
+            ],
+            "subtotal": 950000.00,
+            "gst_exemption_note": "Customer holds exemption cert GSTIN-EX-MH-2024-00881 for HSN 8471 goods. GST charged at 18% — NOT exempt. Disputed amount: INR 1,62,000.",
+            "tax_rate_pct": 18,
+            "tax_amount_charged": 171000.00,
+            "tax_amount_if_exempt": 9000.00,
+            "disputed_tax_amount": 162000.00,
+            "total_amount": 1121000.00,
+            "currency": "INR",
+            "payment_terms": "Net 30",
+            "po_reference": "PO-ACME-2026-002",
+            "status": "DISPUTED",
+        },
+    },
+
+    # 13. Acme Corp — Consulting services, wrong billing address on invoice
+    {
+        "invoice_number": "INV-2024-013",
+        "invoice_url": "https://storage.example.com/invoices/INV-2024-013.pdf",
+        "invoice_details": {
+            "invoice_number": "INV-2024-013",
+            "invoice_date": "2026-02-25",
+            "due_date": "2026-03-27",
+            "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
+            "customer_name": "Acme Corp",
+            "customer_id": "acme",
+            "billing_address_on_invoice": "Acme Corp, Andheri East, Mumbai — 400 069",
+            "correct_billing_address": "Acme Corp, Powai, Mumbai — 400 076",
+            "gstin": "27AABCA1234F1Z5",
+            "address_note": "Address updated to Powai per GSTIN records since January 2026. Invoice shows old address — must be reissued for ITC claim.",
+            "line_items": [
+                {"description": "IT Strategy Consulting Q1 2026 (SAC 998314)", "qty": 80, "unit_price": 5500.00, "total": 440000.00, "sac": "998314"},
+                {"description": "Digital Transformation Roadmap Report", "qty": 1, "unit_price": 75000.00, "total": 75000.00},
+                {"description": "Workshop Facilitation (2 days)", "qty": 2, "unit_price": 35000.00, "total": 70000.00},
+            ],
+            "subtotal": 585000.00,
+            "tax_rate_pct": 18,
+            "tax_amount": 105300.00,
+            "total_amount": 690300.00,
+            "currency": "INR",
+            "payment_terms": "Net 30",
+            "po_reference": "PO-ACME-2026-003",
+            "status": "ON_HOLD",
+            "hold_reason": "Wrong billing address — reissue required before payment.",
+        },
+    },
 ]
 
 # =============================================================================
@@ -661,6 +753,83 @@ PAYMENTS = [
             "status": "CLEARED",
             "payment_type": "FULL",
             "payment_sequence": 1,
+        },
+    },
+
+    # INV-2024-011 — Acme: full payment cleared
+    {
+        "customer_id": "acme",
+        "invoice_number": "INV-2024-011",
+        "payment_url": "https://storage.example.com/payments/PAY-2024-011A.pdf",
+        "payment_details": {
+            "payment_reference": "PAY-2024-011A",
+            "payment_date": "2026-02-12",
+            "amount_paid": 454300.00,
+            "payment_mode": "NEFT",
+            "bank_reference": "NEFT26043002881",
+            "invoice_number": "INV-2024-011",
+            "customer_id": "acme",
+            "status": "CLEARED",
+            "payment_type": "FULL",
+            "payment_sequence": 1,
+        },
+    },
+
+    # INV-2024-012 — Acme: partial paid (withheld disputed GST INR 1,62,000)
+    {
+        "customer_id": "acme",
+        "invoice_number": "INV-2024-012",
+        "payment_url": "https://storage.example.com/payments/PAY-2024-012A.pdf",
+        "payment_details": {
+            "payment_reference": "PAY-2024-012A",
+            "payment_date": "2026-03-05",
+            "amount_paid": 959000.00,
+            "payment_mode": "RTGS",
+            "bank_reference": "RTGS26064007741",
+            "invoice_number": "INV-2024-012",
+            "customer_id": "acme",
+            "status": "CLEARED",
+            "payment_type": "PARTIAL",
+            "payment_sequence": 1,
+            "note": "Partial payment — INR 1,62,000 withheld pending GST exemption resolution (cert GSTIN-EX-MH-2024-00881)",
+        },
+    },
+    {
+        "customer_id": "acme",
+        "invoice_number": "INV-2024-012",
+        "payment_url": "https://storage.example.com/payments/PAY-2024-012B.pdf",
+        "payment_details": {
+            "payment_reference": "PAY-2024-012B",
+            "payment_date": None,
+            "amount_paid": 162000.00,
+            "payment_mode": "RTGS",
+            "bank_reference": None,
+            "invoice_number": "INV-2024-012",
+            "customer_id": "acme",
+            "status": "PENDING",
+            "payment_type": "PARTIAL",
+            "payment_sequence": 2,
+            "note": "GST balance held — to be paid on issuance of revised exempt invoice or credit note.",
+        },
+    },
+
+    # INV-2024-013 — Acme: no payment (invoice on hold — wrong address)
+    {
+        "customer_id": "acme",
+        "invoice_number": "INV-2024-013",
+        "payment_url": "https://storage.example.com/payments/PAY-2024-013A.pdf",
+        "payment_details": {
+            "payment_reference": "PAY-2024-013A",
+            "payment_date": None,
+            "amount_paid": 690300.00,
+            "payment_mode": "RTGS",
+            "bank_reference": None,
+            "invoice_number": "INV-2024-013",
+            "customer_id": "acme",
+            "status": "ON_HOLD",
+            "payment_type": "FULL",
+            "payment_sequence": 1,
+            "note": "Payment blocked — wrong billing address on invoice (Andheri East vs Powai per GSTIN). ITC blocked until reissued.",
         },
     },
 ]
@@ -1114,6 +1283,38 @@ Thanks,
 Nishant Malhotra
 Director Finance
 GreenPower Solutions Pvt Ltd""",
+    },
+
+    # 15. Follow-up payment status — Acme Corp (tests auto-dispute-link feature)
+    #     This email references DISP token from the original payment inquiry (email_06).
+    #     Should be auto-linked to dispute #8 via token match, NOT fork a new dispute.
+    {
+        "filename": "email_15_followup_payment_acme.pdf",
+        "sender": "ap@acmecorp.com",
+        "subject": "RE: Payment Status Inquiry — INV-2024-001 [DISP-00008]",
+        "body": """Hi,
+
+This is a follow-up to our earlier email regarding the payment status for
+Invoice INV-2024-001 (Reference: DISP-00008).
+
+We have not yet received the official payment receipt we requested.
+
+As a reminder:
+  - Payment of INR 1,18,000 was made on 25th November 2024 via NEFT
+  - NEFT Reference: NEFT24325001234
+  - Bank: HDFC Bank, Acme Corp Current Account
+
+Could you please:
+1. Confirm the payment has been received and credited to our account
+2. Send us the official payment receipt / acknowledgment letter
+3. Confirm the invoice status has been updated to \"PAID\" in your system
+
+This is now overdue for our audit trail — we need this resolved by end of week.
+
+Regards,
+Anita Desai
+Accounts Payable, Acme Corp
+ap@acmecorp.com | +91-22-6789-0123""",
     },
 ]
 

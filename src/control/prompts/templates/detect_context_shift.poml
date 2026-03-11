@@ -47,6 +47,14 @@
       - The same invoice is mentioned with an additional related complaint.
       - Customer is directly responding to a question asked by the FA.
       - The tone escalates but the subject matter is identical.
+      - Customer is asking about payment status, receipt confirmation, or
+        acknowledgement for the SAME invoice already on record — even if no
+        prior dispute exists. Payment status checks are ALWAYS continuations,
+        never new disputes. A customer asking "did you receive my payment for
+        INV-X?" must never fork a new dispute if INV-X is the existing invoice.
+      - The email is a general clarification or administrative query
+        (e.g. address correction, receipt request, status check) on the same
+        invoice — these continue the existing dispute, they do not fork it.
 
     When is_context_shift=true, populate new_issues with ONE entry per distinct new dispute.
     Each new_issues entry must have:

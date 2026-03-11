@@ -8,7 +8,7 @@ from typing import List, Dict, Optional
 from poml import poml as render_poml
 
 PROMPT_NAME    = "generate_ar_response"
-PROMPT_VERSION = "2.0"
+PROMPT_VERSION = "3.0"
 _TEMPLATE = str(Path(__file__).parent / "templates" / "generate_response.poml")
 
 
@@ -28,19 +28,20 @@ def build_generate_response_prompt(
     dispute_token: Optional[str] = None,
     inline_issues_summary: str = "",
     inline_issues: Optional[List[Dict]] = None,
+    # When True this call is for one specific issue inside a multi-issue email.
+    # The LLM must respond to THIS issue only and ignore the rest of the email.
+    is_focused_issue: bool = False,
+    focus_invoice_number: Optional[str] = None,
 ) -> str:
-    # Build a stripped-down version of inline_issues for the prompt —
-    # only description, invoice_number, disputed_amount, and token placeholder.
-    # Internal fields like dispute_type_name are intentionally excluded so the
-    # LLM cannot leak them into the customer-facing email.
+    # inline_issues_ctx kept for backwards compat but unused in focused mode
     inline_issues_ctx = "None"
-    if inline_issues:
+    if inline_issues and not is_focused_issue:
         safe_issues = []
         for idx, iss in enumerate(inline_issues, 2):
             safe_issues.append({
-                "description":     iss.get("description", ""),
-                "invoice_number":  iss.get("invoice_number"),
-                "disputed_amount": iss.get("disputed_amount"),
+                "description":       iss.get("description", ""),
+                "invoice_number":    iss.get("invoice_number"),
+                "disputed_amount":   iss.get("disputed_amount"),
                 "token_placeholder": f"{{DISPUTE_TOKEN_{idx}}}",
             })
         inline_issues_ctx = json.dumps(safe_issues, indent=2)
@@ -50,10 +51,12 @@ def build_generate_response_prompt(
         "sender_email":          sender_email,
         "body_text":             body_text,
         "invoice_ctx":           json.dumps(invoice_details or {}, indent=2),
-        "payment_ctx":           json.dumps(all_payment_details, indent=2) if all_payment_details else "No payment records on file",
+        "payment_ctx":           (json.dumps(all_payment_details, indent=2)
+                                  if all_payment_details else "No payment records on file"),
         "memory_ctx":            memory_summary or "No previous conversation on record",
         "recent_eps":            json.dumps(recent_episodes[:4], indent=2),
-        "pending_qs":            json.dumps(pending_questions, indent=2) if pending_questions else "None",
+        "pending_qs":            (json.dumps(pending_questions, indent=2)
+                                  if pending_questions else "None"),
         "classification":        classification,
         "dispute_type_name":     dispute_type_name,
         "priority":              priority,
@@ -61,6 +64,9 @@ def build_generate_response_prompt(
         "dispute_token":         dispute_token or "{DISPUTE_TOKEN}",
         "inline_issues_summary": inline_issues_summary,
         "inline_issues_ctx":     inline_issues_ctx,
+        # Focused-issue fields
+        "is_focused_issue":      is_focused_issue,
+        "focus_invoice_number":  focus_invoice_number or "not specified",
     }
 
     messages = render_poml(_TEMPLATE, context)

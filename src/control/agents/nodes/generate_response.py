@@ -64,9 +64,6 @@ async def _fetch_issue_context(
     Falls back to the primary-level context when no distinct number exists
     or the DB lookup fails.
     """
-
-    print("hello")
-
     if not db_session or not invoice_number:
         return fallback_invoice_details, fallback_payment_details
 
@@ -119,6 +116,8 @@ async def _call_llm_for_issue(
     description: str,
     dispute_token: str,
     email_id: int,
+    is_focused_issue: bool = False,
+    focus_invoice_number: Optional[str] = None,
 ) -> Dict:
     """
     Run one full generate_response.poml LLM call for a single issue.
@@ -140,6 +139,8 @@ async def _call_llm_for_issue(
         dispute_token=dispute_token,
         inline_issues_summary="",  # each call is for ONE issue only
         inline_issues=None,
+        is_focused_issue=is_focused_issue,
+        focus_invoice_number=focus_invoice_number,
     )
 
     try:
@@ -300,6 +301,7 @@ async def node_generate_ai_response(
             description=state.get("description", ""),
             dispute_token=dispute_token,
             email_id=email_id,
+            is_focused_issue=False,
         )
         langfuse_context.update_current_observation(
             input={"prompt_name": RESPONSE_PROMPT_NAME, "prompt_version": RESPONSE_PROMPT_VERSION},
@@ -375,6 +377,8 @@ async def node_generate_ai_response(
             description=spec["description"],
             dispute_token=spec["dispute_token"],
             email_id=email_id,
+            is_focused_issue=True,
+            focus_invoice_number=spec.get("invoice_number"),
         )
         per_issue_responses.append(result)
         all_fa_questions.extend(result.get("questions_to_ask") or [])

@@ -467,7 +467,13 @@ async def node_persist_results(
             new_type_data=state.get("_new_dispute_type"),
         )
 
-        dispute_id         = state.get("existing_dispute_id")
+        # Token match is the most authoritative signal — it means the customer
+        # explicitly quoted our reference. Use it unconditionally even if
+        # fetch_context overwrote existing_dispute_id with a different dispute.
+        dispute_id = (
+            state.get("token_matched_dispute_id")
+            or state.get("existing_dispute_id")
+        )
         primary_payment_id = (
             state["matched_payment_ids"][0] if state.get("matched_payment_ids") else None
         )
@@ -494,14 +500,27 @@ async def node_persist_results(
             dispute_id    = dispute.dispute_id
             dispute_token = dispute.dispute_token
 
-            # Back-fill the real token into the AI response.
-            # Multi-issue emails use {DISPUTE_TOKEN_1} for the primary.
-            # Single-issue emails use {DISPUTE_TOKEN}.
+            # Resolve {DISPUTE_TOKEN} in the primary ai_response.
+            # Also update per_issue_responses[0] so inline issues in step 9a
+            # can replace any stray {DISPUTE_TOKEN} from their own LLM output.
             if state.get("ai_response"):
                 updated_response = state["ai_response"]
                 updated_response = updated_response.replace("{DISPUTE_TOKEN_1}", dispute_token)
                 updated_response = updated_response.replace("{DISPUTE_TOKEN}", dispute_token)
                 state = {**state, "ai_response": updated_response}
+
+            # Keep per_issue_responses in sync — replace primary's token too
+            pir = state.get("per_issue_responses") or []
+            if pir:
+                updated_pir = list(pir)
+                if updated_pir[0].get("ai_response"):
+                    updated_pir[0] = {
+                        **updated_pir[0],
+                        "ai_response": updated_pir[0]["ai_response"]
+                            .replace("{DISPUTE_TOKEN_1}", dispute_token)
+                            .replace("{DISPUTE_TOKEN}", dispute_token),
+                    }
+                state = {**state, "per_issue_responses": updated_pir}
 
             logger.info(
                 f"[email_id={email_id}] New primary dispute: id={dispute_id} "
@@ -522,7 +541,18 @@ async def node_persist_results(
                 ))
                 await db_session.flush()
 
-        # ── 3. AI analysis record ─────────────────────────────────────────────
+        # ── 3. Customer email episode (FIRST — anchors timeline correctly) ──
+        email_episode = DisputeMemoryEpisode(
+            dispute_id=dispute_id,
+            episode_type="CUSTOMER_EMAIL",
+            actor="CUSTOMER",
+            content_text=f"Subject: {state['subject']}\n\n{state['body_text'][:1000]}",
+            email_id=email_id,
+        )
+        db_session.add(email_episode)
+        await db_session.flush()
+
+        # ── 4. AI analysis record (written after customer episode) ────────────
         analysis = DisputeAIAnalysis(
             dispute_id=dispute_id,
             predicted_category=state.get("dispute_type_name") or "General Clarification",
@@ -539,7 +569,7 @@ async def node_persist_results(
         db_session.add(analysis)
         await db_session.flush()
 
-        # ── 3a. Supporting docs ───────────────────────────────────────────────
+        # ── 4a. Supporting docs ───────────────────────────────────────────────
         ref_repo = AnalysisSupportingRefRepository(db_session)
         if state.get("matched_invoice_id"):
             await ref_repo.upsert_supporting_doc(
@@ -558,17 +588,6 @@ async def node_persist_results(
                 ref_id_value=pid,
                 context_note=f"Payment {pid} — supporting document",
             )
-
-        # ── 4. Customer email episode ─────────────────────────────────────────
-        email_episode = DisputeMemoryEpisode(
-            dispute_id=dispute_id,
-            episode_type="CUSTOMER_EMAIL",
-            actor="CUSTOMER",
-            content_text=f"Subject: {state['subject']}\n\n{state['body_text'][:1000]}",
-            email_id=email_id,
-        )
-        db_session.add(email_episode)
-        await db_session.flush()
 
         # ── 6. FA open questions ──────────────────────────────────────────────
         for item in state.get("questions_to_ask", []):
@@ -641,9 +660,13 @@ async def node_persist_results(
                 token_str = f"DISP-{iid:05d}"
 
                 if pir:
-                    # Resolve {DISPUTE_TOKEN_N} in this issue's own response
-                    resolved_resp = pir["ai_response"].replace(
-                        f"{{DISPUTE_TOKEN_{seq_idx}}}", token_str
+                    # Resolve {DISPUTE_TOKEN_N} AND any stray bare {DISPUTE_TOKEN}
+                    # — the LLM sometimes writes the bare placeholder even in focused
+                    # mode. Both must map to THIS issue's real token.
+                    resolved_resp = (
+                        pir["ai_response"]
+                        .replace(f"{{DISPUTE_TOKEN_{seq_idx}}}", token_str)
+                        .replace("{DISPUTE_TOKEN}", token_str)
                     ) if pir.get("ai_response") else None
 
                     # Write this inline issue's own DisputeAIAnalysis
@@ -730,16 +753,8 @@ async def node_persist_results(
                         q.answered_in_episode_id = ai_episode.episode_id
                         q.answered_at            = datetime.now(timezone.utc)
 
-            # Back-fill the fully-resolved ack onto each inline dispute's timeline
-            if inline_dispute_ids:
-                for iid in inline_dispute_ids:
-                    db_session.add(DisputeMemoryEpisode(
-                        dispute_id=iid,
-                        episode_type="AI_ACKNOWLEDGEMENT",
-                        actor="AI",
-                        content_text=state["ai_response"],
-                        email_id=email_id,
-                    ))
+            # NOTE: inline dispute episodes are written individually in step 9a
+            # (each with its own resolved ai_response). No back-fill needed here.
 
         # ── 5a. Embed AI summary ──────────────────────────────────────────────
         ai_summary_text = (state.get("ai_summary") or "").strip()
