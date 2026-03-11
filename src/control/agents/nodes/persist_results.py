@@ -605,18 +605,23 @@ async def node_persist_results(
             await _auto_assign(db_session, dispute_id, email_id, label="[primary]")
 
         # ── 9a. Create INLINE disputes (multi-issue same email) ───────────────
-        # CRITICAL ORDER: inline disputes are created BEFORE the AI episode is
-        # written. The multi-issue ack email contains {DISPUTE_TOKEN_2},
-        # {DISPUTE_TOKEN_3} … placeholders that are only resolved once the
-        # inline DisputeMaster rows are flushed and their IDs are known.
-        # Writing the AI episode after this block guarantees the stored episode
-        # content always contains real DISP-XXXXX tokens — never raw placeholders.
+        #
+        # For multi-issue emails each inline issue now has its OWN ai_response
+        # stored in state["per_issue_responses"]. We:
+        #   1. Create each inline DisputeMaster row (same as before).
+        #   2. Resolve its token {DISPUTE_TOKEN_N} in its own response string.
+        #   3. Write its own DisputeAIAnalysis record with the resolved response.
+        #   4. Write its own AI episode on its timeline.
+        #
+        # The primary state["ai_response"] is also updated for backwards compat.
         inline_dispute_ids: List[int] = []
-        inline_issues = state.get("inline_issues") or []
+        inline_issues      = state.get("inline_issues") or []
+        per_issue_responses = state.get("per_issue_responses") or []
+
+        # Build a lookup: issue_index → per_issue result (index 0 = primary)
+        pir_by_index = {r["issue_index"]: r for r in per_issue_responses}
+
         if inline_issues:
-            # Pass ai_response=None — we write the ack episode below once
-            # all tokens are substituted, so inline timelines don't get a
-            # stale copy with unresolved placeholders.
             inline_dispute_ids = await _persist_inline_disputes(
                 db_session,
                 primary_dispute_id=dispute_id,
@@ -626,23 +631,77 @@ async def node_persist_results(
                 matched_invoice_id=state.get("matched_invoice_id"),
                 email_subject=state.get("subject", ""),
                 email_body=state.get("body_text", ""),
-                ai_response=None,   # filled in below after token resolution
+                ai_response=None,   # each inline gets its own episode written below
             )
-            # Substitute {DISPUTE_TOKEN_2}, {DISPUTE_TOKEN_3} … now that IDs exist.
-            # {DISPUTE_TOKEN_1} / {DISPUTE_TOKEN} were replaced for the primary above.
-            if state.get("ai_response"):
-                updated_response = state["ai_response"]
-                for seq_idx, iid in enumerate(inline_dispute_ids, 2):
-                    updated_response = updated_response.replace(
-                        f"{{DISPUTE_TOKEN_{seq_idx}}}", f"DISP-{iid:05d}"
+
+            # For each inline dispute: resolve its token, write its own analysis + episode
+            for seq_idx, iid in enumerate(inline_dispute_ids, 2):
+                issue_idx = seq_idx - 1          # issue_index in per_issue_responses
+                pir       = pir_by_index.get(issue_idx)
+                token_str = f"DISP-{iid:05d}"
+
+                if pir:
+                    # Resolve {DISPUTE_TOKEN_N} in this issue's own response
+                    resolved_resp = pir["ai_response"].replace(
+                        f"{{DISPUTE_TOKEN_{seq_idx}}}", token_str
+                    ) if pir.get("ai_response") else None
+
+                    # Write this inline issue's own DisputeAIAnalysis
+                    inline_analysis = DisputeAIAnalysis(
+                        dispute_id=iid,
+                        predicted_category=inline_issues[issue_idx - 1].get(
+                            "dispute_type_name", "General Clarification"
+                        ),
+                        confidence_score=pir.get("confidence_score", 0.0),
+                        ai_summary=pir.get("ai_summary", ""),
+                        ai_response=resolved_resp,
+                        auto_response_generated=pir.get("can_auto_respond", False),
+                        memory_context_used=pir.get("memory_context_used", False),
+                        episodes_referenced=pir.get("episodes_referenced") or [],
                     )
-                state = {**state, "ai_response": updated_response}
+                    db_session.add(inline_analysis)
+                    await db_session.flush()
+
+                    # Write AI episode on this inline dispute's timeline
+                    if resolved_resp:
+                        ep_type = ("AI_RESPONSE" if pir.get("can_auto_respond")
+                                   else "AI_ACKNOWLEDGEMENT")
+                        db_session.add(DisputeMemoryEpisode(
+                            dispute_id=iid,
+                            episode_type=ep_type,
+                            actor="AI",
+                            content_text=resolved_resp,
+                            email_id=email_id,
+                        ))
+
+                    # FA open questions for this inline dispute
+                    for q_text in (pir.get("questions_to_ask") or []):
+                        db_session.add(DisputeOpenQuestion(
+                            dispute_id=iid,
+                            question_text=q_text,
+                            status="PENDING",
+                        ))
+
+                    await db_session.flush()
+
+                # Also resolve the token in the primary's ai_response (backwards compat)
+                if state.get("ai_response"):
+                    state = {
+                        **state,
+                        "ai_response": state["ai_response"].replace(
+                            f"{{DISPUTE_TOKEN_{seq_idx}}}", token_str
+                        ),
+                    }
+
+            # Back-fill primary analysis with its own resolved response
+            if state.get("ai_response"):
+                analysis.ai_response = state["ai_response"]
+                await db_session.flush()
 
             logger.info(
                 f"[email_id={email_id}] Created {len(inline_dispute_ids)} inline dispute(s): "
-                f"{inline_dispute_ids}"
+                f"{inline_dispute_ids} — each with own ai_response"
             )
-
         # ── 5. AI response episode (written AFTER all tokens are resolved) ────
         # For single-issue emails ai_response never had inline placeholders so
         # order did not matter previously. For multi-issue emails we now have

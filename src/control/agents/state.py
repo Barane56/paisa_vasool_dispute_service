@@ -76,12 +76,19 @@ class EmailProcessingState(TypedDict):
 
     # ── AI output ─────────────────────────────────────────────────────────────
     ai_summary:              str
-    ai_response:             Optional[str]
+    ai_response:             Optional[str]   # primary issue (single-issue compat)
     confidence_score:        float
     auto_response_generated: bool
     questions_to_ask:        List[str]
     memory_context_used:     bool
     episodes_referenced:     List[int]
+
+    # Per-issue responses for multi-issue emails.
+    # Each entry shape:
+    #   issue_index, invoice_number, classification, description,
+    #   ai_response, can_auto_respond, ai_summary, confidence_score,
+    #   questions_to_ask, dispute_token (placeholder resolved by persist_results)
+    per_issue_responses: List[Dict]
 
     # ── Final ─────────────────────────────────────────────────────────────────
     dispute_id:          Optional[int]   # primary dispute id for this email
@@ -148,6 +155,7 @@ def build_initial_state(
         "questions_to_ask":            [],
         "memory_context_used":         False,
         "episodes_referenced":         [],
+        "per_issue_responses":          [],
         "dispute_id":                  None,
         "forked_dispute_ids":          [],
         "inline_dispute_ids":          [],

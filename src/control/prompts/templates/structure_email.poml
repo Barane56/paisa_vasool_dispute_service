@@ -24,37 +24,53 @@
   {% endif %}
 
   <hint>
-    SPLITTING RULES — the bar for splitting is very high.
+    STEP 1 — SINGLE-ISSUE GATE (check this FIRST, before anything else)
+    -----------------------------------------------------------------------
+    If ANY of the following is true, you MUST return additional_issues = []
+    and treat the entire email as ONE issue. No exceptions.
 
-    You may ONLY add an entry to additional_issues when ALL of the following are true:
-      A. The customer references a DIFFERENT invoice number for a different problem.
-      B. The problem on that invoice is unrelated to the primary issue.
-      C. A separate FA would need to handle it independently.
+      • The email mentions only ONE invoice number (or no invoice number at all).
+      • All numbered/bulleted points relate to the same invoice, contract, or payment.
+      • The email is a payment hold or delay notice explaining a single reason.
+      • The customer lists confirmations or conditions before releasing ONE payment.
+      • The email contains phrases like "we want to confirm", "please confirm",
+        "once clarified we will pay", "pending clearance", "hold on payment".
+      • The numbered list is sub-questions or sub-conditions of a single situation.
+      • Any case where you are uncertain.
 
-    If ANY condition is false → additional_issues = [].
+    Only if the gate above does NOT trigger, proceed to Step 2.
 
-    NEVER split for these (no exceptions, even if numbered or bulleted):
-      • All questions/issues reference the same invoice number.
-      • Numbered lists (1. 2. 3.) or bulleted items about the same invoice or milestone.
-      • Multiple questions before releasing a single payment — all are ONE clarification.
-      • "Once these are clarified we will release payment" → always ONE issue.
-      • Pre-payment document requests (timesheets, drawings, test reports, warranties).
-      • Questions about the same contract, PO, or project.
-      • Status checks or follow-up questions on the same invoice.
-      • Any case where you are uncertain — default to ONE.
+    STEP 2 — MULTI-ISSUE TEST (all three must be true to split)
+    -----------------------------------------------------------------------
+      A. The email explicitly references TWO OR MORE DIFFERENT invoice numbers.
+      B. Each invoice has a completely unrelated problem requiring separate FA action.
+      C. A single FA could NOT resolve all issues in one conversation.
+
+    If all three are true → split. Otherwise → ONE issue.
 
     CLASSIFICATION:
       DISPUTE — customer actively rejects a charge or claims a billing error.
         Money is withheld because of an error in the invoice itself.
-      CLARIFICATION — customer asks questions or requests information/documents
-        before processing payment. No billing error alleged.
+      CLARIFICATION — customer asks questions, requests documents, gives notice
+        of a delay, or lists conditions before payment. No billing error alleged.
 
     For EACH issue return:
       - classification: "DISPUTE" or "CLARIFICATION"
-      - description: 2-3 sentences summarising this specific issue only.
-        For single-issue emails describe the whole email in 2-3 sentences.
-        For multi-issue emails describe only what is different about THIS issue.
-      - invoice_number: specific invoice for this issue, or null
+      - description: a short customer-facing phrase describing what the customer
+        raised, written as a plain-language fragment that can follow "your concern
+        regarding …" naturally in an email.
+        RULES for description:
+          • Write in second person: "the commissioning delay on INV-2024-009",
+            "the GST exemption not applied on INV-Y", "the incorrect billing address".
+          • NEVER start with "Customer", "The customer", "customer is", or any
+            third-person framing — these are internal summaries, not customer text.
+          • Keep it concise — one short clause, not a full paragraph.
+          • For multi-issue emails describe only what is distinct about THIS issue.
+      - invoice_number: the SPECIFIC invoice referenced for THIS issue only.
+        CRITICAL — when the email mentions multiple invoice numbers, each issue
+        MUST carry its own distinct invoice_number. Never repeat the same invoice
+        number across issues unless the email genuinely uses the same invoice for
+        multiple problems. If no invoice number is stated for this issue, use null.
       - disputed_amount: amount withheld/disputed for this issue, or null
       - priority: "LOW", "MEDIUM", or "HIGH"
 
@@ -65,7 +81,7 @@
   <p>Return ONLY valid JSON:
   {
     "classification":    "DISPUTE" or "CLARIFICATION",
-    "description":       "2-3 sentence summary",
+    "description":       "short customer-facing clause, e.g. \"the commissioning delay on INV-2024-009\"",
     "invoice_number":    "INV-XXXX or null",
     "disputed_amount":   "INR X,XX,XXX or null",
     "priority":          "LOW" or "MEDIUM" or "HIGH",
