@@ -26,7 +26,7 @@ async def get_current_user(
     # print("Validating token for incoming request...")  # Debug: log when this function is called
     # use the below for testing for swagger
     # token = credentials.credentials
-    print(request.headers)
+    # print(request.headers)
     token = None
     # for api based connection we need to read the cookie from access token 
     # when using swagger please uncomment the HTTPAuthorizationCredentials line
@@ -35,7 +35,7 @@ async def get_current_user(
     # else:
     token = request.cookies.get("access_token")
 
-    print(token)
+    # print(token)
     # print(f"Received token: {token[:10]}...")  # Debug: log the start of the token
     try:
         payload = decode_access_token(token)

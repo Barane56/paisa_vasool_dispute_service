@@ -124,7 +124,7 @@ async def _create_dispute(
 
 async def _auto_assign(db_session, dispute_id: int, email_id: int, label: str = ""):
     from src.data.models.postgres.models import DisputeAssignment
-    from src.data.repositories.repositories import DisputeAssignmentRepository, UserRepository
+    from src.data.repositories.repositories import DisputeAssignmentRepository, UserRoleRepository
 
     assign_repo       = DisputeAssignmentRepository(db_session)
     active_assignment = await assign_repo.get_active_assignment(dispute_id)
@@ -132,20 +132,21 @@ async def _auto_assign(db_session, dispute_id: int, email_id: int, label: str = 
         logger.info(f"[email_id={email_id}] {label} dispute_id={dispute_id} already assigned")
         return
 
-    user_repo = UserRepository(db_session)
-    all_users = await user_repo.get_all(limit=10)
-    if not all_users:
-        logger.warning(f"[email_id={email_id}] {label} no users — dispute_id={dispute_id} unassigned")
+    # get_all_fa() returns List[int] — plain user_id values, not User objects
+    user_role_repo = UserRoleRepository(db_session)
+    fa_user_ids    = await user_role_repo.get_all_fa()
+    if not fa_user_ids:
+        logger.warning(f"[email_id={email_id}] {label} no FA users found — dispute_id={dispute_id} unassigned")
         return
 
     db_session.add(DisputeAssignment(
         dispute_id=dispute_id,
-        assigned_to=all_users[0].user_id,
+        assigned_to=fa_user_ids[0],   # already an int
         status="ACTIVE",
     ))
     logger.info(
         f"[email_id={email_id}] {label} auto-assigned dispute_id={dispute_id} "
-        f"to user_id={all_users[0].user_id}"
+        f"to user_id={fa_user_ids[0]}"
     )
 
 
@@ -530,6 +531,17 @@ async def node_persist_results(
             )
         else:
             dispute_token = f"DISP-{dispute_id:05d}"
+
+            # Resolve {DISPUTE_TOKEN} in follow-up emails — the new dispute (step 2)
+            # is skipped here but the LLM still wrote the placeholder. Replace it now.
+            if state.get("ai_response"):
+                updated_response = (
+                    state["ai_response"]
+                    .replace("{DISPUTE_TOKEN_1}", dispute_token)
+                    .replace("{DISPUTE_TOKEN}", dispute_token)
+                )
+                state = {**state, "ai_response": updated_response}
+
             dispute = await DisputeRepository(db_session).get_by_id(dispute_id)
             if dispute:
                 if not dispute.payment_detail_id and primary_payment_id:

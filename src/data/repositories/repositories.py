@@ -26,7 +26,10 @@ Nothing in this file needs to change.
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select, update, and_, text
+import sqlalchemy as sa
 from sqlalchemy.orm import selectinload
+from sqlalchemy import select, func
+from typing import List
 
 from .base import BaseRepository
 from src.data.models.postgres.models import (
@@ -34,7 +37,7 @@ from src.data.models.postgres.models import (
     EmailInbox, EmailAttachment, DisputeType, DisputeMaster,
     DisputeAIAnalysis, AnalysisSupportingRef, DisputeAssignment,
     DisputeActivityLog, DisputeStatusHistory,
-    DisputeMemoryEpisode, DisputeMemorySummary, DisputeOpenQuestion,
+    DisputeMemoryEpisode, DisputeMemorySummary, DisputeOpenQuestion, UserRole,Role
 )
 
 
@@ -51,6 +54,35 @@ class UserRepository(BaseRepository[User]):
         stmt = select(User).where(User.email == email)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
+
+
+class UserRoleRepository(BaseRepository[UserRole]):
+    
+    def __init__(self, db: AsyncSession):
+        super().__init__(UserRole, db)
+
+    async def get_all_fa(self) -> List[int]:
+
+        # get admin role
+        stmt = await self.db.execute(
+            select(Role).where(Role.role_name == "admin")
+        )
+        admin_role = stmt.scalar_one_or_none()
+
+        if not admin_role:
+            raise Exception("Admin Role not found, Aborting")
+
+        # get 10 random FA (users not having admin role)
+        stmt = await self.db.execute(
+            select(UserRole.user_id)
+            .where(UserRole.role_id != admin_role.role_id)
+            .order_by(func.random())
+            .limit(10)
+        )
+
+        fa_ids = stmt.scalars().all()
+
+        return fa_ids
 
 
 class InvoiceRepository(BaseRepository[InvoiceData]):
@@ -245,7 +277,7 @@ class DisputeRepository(BaseRepository[DisputeMaster]):
                 or_(
                     DisputeMaster.customer_id.ilike(q),
                     DisputeMaster.description.ilike(q),
-                    func.cast(DisputeMaster.dispute_id, func.String).ilike(q),
+                    func.cast(DisputeMaster.dispute_id, sa.String).ilike(q),
                     DT.reason_name.ilike(q),
                 )
             )

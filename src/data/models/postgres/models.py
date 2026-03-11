@@ -1,14 +1,32 @@
 from sqlalchemy import (
     Column, Enum, Integer, String, Text, Boolean, Numeric,
-    TIMESTAMP, JSON, ForeignKey, Index, func, text,
+    TIMESTAMP, JSON, ForeignKey, Index, UniqueConstraint, func, text,
+    Enum as SQLEnum,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
 from pgvector.sqlalchemy import VECTOR
 from sqlalchemy.orm import DeclarativeBase, relationship
 
+from src.constants.enums import SeverityLevel
+
 
 class Base(DeclarativeBase):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Roles  (auth service — read-only here)
+# ---------------------------------------------------------------------------
+class Role(Base):
+    __tablename__ = "roles"
+
+    role_id   = Column(Integer, primary_key=True)
+    role_name = Column(String(50), unique=True, nullable=False)
+
+    user_roles = relationship("UserRole", back_populates="role", lazy="select")
+
+    def __repr__(self) -> str:
+        return f"<Role id={self.role_id} name={self.role_name}>"
 
 
 # ---------------------------------------------------------------------------
@@ -23,15 +41,37 @@ class User(Base):
     password_hash = Column(Text, nullable=False)
     created_at    = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
+    user_roles     = relationship("UserRole",             back_populates="user",      uselist=False, lazy="joined", cascade="all, delete-orphan")
     assignments    = relationship("DisputeAssignment",    back_populates="assignee",  lazy="select")
     activity_logs  = relationship("DisputeActivityLog",   back_populates="performer", lazy="select")
     status_history = relationship("DisputeStatusHistory", back_populates="performer", lazy="select")
-    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    refresh_tokens = relationship("RefreshToken",         back_populates="user",      lazy="select", cascade="all, delete-orphan")
 
     __table_args__ = (Index("ix_users_email", "email"),)
 
     def __repr__(self) -> str:
         return f"<User id={self.user_id} email={self.email}>"
+
+
+# ---------------------------------------------------------------------------
+# UserRole  (auth service — read-only here)
+# ---------------------------------------------------------------------------
+class UserRole(Base):
+    __tablename__ = "user_roles"
+
+    user_role_id = Column(Integer, primary_key=True)
+    user_id      = Column(Integer, ForeignKey("users.user_id",  ondelete="CASCADE"),  nullable=False)
+    role_id      = Column(Integer, ForeignKey("roles.role_id",  ondelete="RESTRICT"), nullable=False)
+    assigned_at  = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    user = relationship("User", back_populates="user_roles")
+    role = relationship("Role", back_populates="user_roles", lazy="joined")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", name="uq_user_roles_user_id"),
+        Index("ix_user_roles_user_id", "user_id"),
+        Index("ix_user_roles_role_id", "role_id"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -175,36 +215,30 @@ class EmailAttachment(Base):
 # ---------------------------------------------------------------------------
 # Dispute Type
 # ---------------------------------------------------------------------------
-
-
-# In src/data/models/postgres/models.py
-
-from sqlalchemy import Column, Integer, String, Text, Boolean, Enum as SQLEnum
-from src.constants.enums import SeverityLevel  # Import the enum
-
 class DisputeType(Base):
     __tablename__ = "dispute_type"
 
     dispute_type_id = Column(Integer, primary_key=True)
-    reason_name = Column(String(255), unique=True, nullable=False)
-    description = Column(Text, nullable=True)
-    severity_level = Column(
-        SQLEnum(SeverityLevel, name='severity_level_enum', create_constraint=True),
-        nullable=True,  # Change to False after backfill if you want it required
-        index=True
+    reason_name     = Column(String(255), unique=True, nullable=False)
+    description     = Column(Text, nullable=True)
+    severity_level  = Column(
+        SQLEnum(SeverityLevel, name="severity_level_enum", create_constraint=True),
+        nullable=True,
+        index=True,
     )
     is_active = Column(Boolean, default=True, server_default=text("TRUE"), nullable=False)
 
     disputes = relationship("DisputeMaster", back_populates="dispute_type", lazy="select")
 
     __table_args__ = (
-        Index("ix_dispute_type_reason_name", "reason_name"),
-        Index("ix_dispute_type_is_active", "is_active"),
+        Index("ix_dispute_type_reason_name",    "reason_name"),
+        Index("ix_dispute_type_is_active",      "is_active"),
         Index("ix_dispute_type_severity_level", "severity_level"),
     )
 
     def __repr__(self) -> str:
         return f"<DisputeType id={self.dispute_type_id} name={self.reason_name} severity={self.severity_level}>"
+
 
 # ---------------------------------------------------------------------------
 # Dispute Master
@@ -222,7 +256,6 @@ class DisputeMaster(Base):
     priority          = Column(String(20), nullable=False, default="MEDIUM", server_default="MEDIUM")
     description       = Column(Text, nullable=False)
     dispute_token     = Column(String(32), unique=True, nullable=True)  # e.g. DISP-00042 for cross-thread matching
-    # Self-referential FK: set when this dispute was forked out of an ongoing conversation
     parent_dispute_id = Column(Integer, ForeignKey("dispute_master.dispute_id", ondelete="SET NULL", use_alter=True, name="fk_dispute_master_parent_id"), nullable=True)
     created_at        = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at        = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -239,18 +272,17 @@ class DisputeMaster(Base):
     open_questions = relationship("DisputeOpenQuestion",  back_populates="dispute",            lazy="select", cascade="all, delete-orphan")
     activity_logs  = relationship("DisputeActivityLog",   back_populates="dispute",            lazy="select", cascade="all, delete-orphan")
     status_history = relationship("DisputeStatusHistory", back_populates="dispute",            lazy="select", cascade="all, delete-orphan")
-    # Relationships for context-shift forking
-    forked_disputes = relationship("DisputeMaster",        foreign_keys="DisputeMaster.parent_dispute_id", lazy="select", back_populates="parent_dispute")
-    parent_dispute  = relationship("DisputeMaster",        foreign_keys=[parent_dispute_id],               lazy="select", back_populates="forked_disputes", remote_side="DisputeMaster.dispute_id")
+    forked_disputes         = relationship("DisputeMaster",       foreign_keys="DisputeMaster.parent_dispute_id", lazy="select", back_populates="parent_dispute")
+    parent_dispute          = relationship("DisputeMaster",       foreign_keys=[parent_dispute_id],               lazy="select", back_populates="forked_disputes", remote_side="DisputeMaster.dispute_id")
     relationships_as_source = relationship("DisputeRelationship", foreign_keys="DisputeRelationship.source_dispute_id", back_populates="source_dispute", lazy="select", cascade="all, delete-orphan")
     relationships_as_target = relationship("DisputeRelationship", foreign_keys="DisputeRelationship.target_dispute_id", back_populates="target_dispute", lazy="select", cascade="all, delete-orphan")
 
     __table_args__ = (
-        Index("ix_dispute_master_customer_id",     "customer_id"),
-        Index("ix_dispute_master_status",          "status"),
-        Index("ix_dispute_master_priority",        "priority"),
-        Index("ix_dispute_master_dispute_type_id", "dispute_type_id"),
-        Index("ix_dispute_master_created_at",      "created_at"),
+        Index("ix_dispute_master_customer_id",       "customer_id"),
+        Index("ix_dispute_master_status",            "status"),
+        Index("ix_dispute_master_priority",          "priority"),
+        Index("ix_dispute_master_dispute_type_id",   "dispute_type_id"),
+        Index("ix_dispute_master_created_at",        "created_at"),
         Index("ix_dispute_master_parent_dispute_id", "parent_dispute_id"),
     )
 
@@ -391,7 +423,7 @@ class DisputeOpenQuestion(Base):
     answered_at            = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at             = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
-    dispute          = relationship("DisputeMaster",        back_populates="open_questions",          lazy="joined")
+    dispute          = relationship("DisputeMaster",        back_populates="open_questions",                                              lazy="joined")
     asked_episode    = relationship("DisputeMemoryEpisode", foreign_keys=[asked_in_episode_id],    back_populates="open_questions_asked",    lazy="select")
     answered_episode = relationship("DisputeMemoryEpisode", foreign_keys=[answered_in_episode_id], back_populates="open_questions_answered", lazy="select")
 
@@ -451,10 +483,10 @@ class DisputeStatusHistory(Base):
 # Dispute Relationship
 # ---------------------------------------------------------------------------
 # Tracks explicit relationships between disputes created during a conversation:
-#   FORKED_FROM      — this dispute was split out of an ongoing dispute thread
+#   FORKED_FROM         — this dispute was split out of an ongoing dispute thread
 #   SAME_CUSTOMER_BATCH — multiple disputes raised in a single email
-#   ESCALATION_OF    — this dispute is a formal escalation of another
-#   RELATED          — general linkage (FA-created)
+#   ESCALATION_OF       — this dispute is a formal escalation of another
+#   RELATED             — general linkage (FA-created)
 # ---------------------------------------------------------------------------
 class DisputeRelationship(Base):
     __tablename__ = "dispute_relationship"
@@ -467,9 +499,9 @@ class DisputeRelationship(Base):
              name="dispute_relationship_type"),
         nullable=False,
     )
-    context_note      = Column(Text, nullable=True)   # LLM-generated reason for the fork
-    created_by        = Column(String(20), nullable=False, default="SYSTEM")  # SYSTEM | FA
-    created_at        = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    context_note = Column(Text,      nullable=True)
+    created_by   = Column(String(20), nullable=False, default="SYSTEM")  # SYSTEM | FA
+    created_at   = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
     source_dispute = relationship("DisputeMaster", foreign_keys=[source_dispute_id], back_populates="relationships_as_source", lazy="joined")
     target_dispute = relationship("DisputeMaster", foreign_keys=[target_dispute_id], back_populates="relationships_as_target", lazy="joined")
