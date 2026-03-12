@@ -1,3 +1,5 @@
-from src.data.models.postgres.models import Base
+from sqlalchemy.orm import DeclarativeBase
 
-__all__ = ["Base"]
+
+class Base(DeclarativeBase):
+    pass
