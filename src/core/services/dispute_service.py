@@ -1,7 +1,8 @@
 import logging
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
+from sqlalchemy import select
+from typing import Optional, List
 
 from src.data.repositories.repositories import (
     DisputeRepository, DisputeTypeRepository, DisputeAIAnalysisRepository,
@@ -17,7 +18,7 @@ from src.core.exceptions import (
 )
 from src.schemas.schemas import (
     DisputeStatusUpdate, DisputeAssignRequest, DisputeTimelineResponse,
-    TimelineEpisodeResponse, QuestionStatusUpdate,
+    TimelineEpisodeResponse, TimelineAttachment, QuestionStatusUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -130,13 +131,137 @@ class DisputeService:
         pending_qs = await self.q_repo.get_pending_for_dispute(dispute_id)
         active_assignment = await self.assign_repo.get_active_assignment(dispute_id)
 
+        # ── Fetch attachments for inbound emails ──────────────────────────────
+        # Each CUSTOMER_EMAIL episode has email_id → email_inbox_messages.email_inbox_id
+        # → its attachments in email_message_attachments
+        inbound_email_ids = [
+            ep.email_id for ep in episodes
+            if ep.email_id and ep.actor == "CUSTOMER"
+        ]
+        # Map email_id → list of (attachment_id, file_name, file_type)
+        inbound_att_map: dict = {}
+        if inbound_email_ids:
+            try:
+                from src.data.models.postgres.mailbox_models import (
+                    EmailInboxMessage, EmailMessageAttachment,
+                )
+                result = await self.db.execute(
+                    select(
+                        EmailInboxMessage.email_inbox_id,
+                        EmailMessageAttachment.attachment_id,
+                        EmailMessageAttachment.file_name,
+                        EmailMessageAttachment.file_type,
+                    )
+                    .join(
+                        EmailMessageAttachment,
+                        EmailMessageAttachment.message_id == EmailInboxMessage.message_id,
+                    )
+                    .where(EmailInboxMessage.email_inbox_id.in_(inbound_email_ids))
+                )
+                for row in result.fetchall():
+                    inbound_att_map.setdefault(row.email_inbox_id, []).append(
+                        TimelineAttachment(
+                            attachment_id=row.attachment_id,
+                            file_name=row.file_name,
+                            file_type=row.file_type or "application/octet-stream",
+                            download_url=f"/dispute/api/v1/inbox/attachments/{row.attachment_id}/download",
+                            source="inbound",
+                        )
+                    )
+            except Exception as exc:
+                logger.warning(f"[dispute_id={dispute_id}] Failed to load inbound attachments: {exc}")
+
+        # ── Fetch attachments for outbound emails (AI + Associate replies) ────
+        # OutboundEmail.dispute_id = dispute_id; we match episode ↔ outbound by
+        # closest created_at within a 30-second window.
+        outbound_att_map: dict = {}   # episode_id → list[TimelineAttachment]
+        outbound_episodes = [ep for ep in episodes if ep.actor in ("AI", "ASSOCIATE")]
+        if outbound_episodes:
+            try:
+                from src.data.models.postgres.mailbox_models import (
+                    OutboundEmail, OutboundEmailAttachment,
+                )
+                from sqlalchemy import func as safunc
+                result = await self.db.execute(
+                    select(
+                        OutboundEmail.outbound_id,
+                        OutboundEmail.created_at,
+                        OutboundEmailAttachment.attachment_id,
+                        OutboundEmailAttachment.file_name,
+                        OutboundEmailAttachment.file_type,
+                    )
+                    .join(
+                        OutboundEmailAttachment,
+                        OutboundEmailAttachment.outbound_id == OutboundEmail.outbound_id,
+                    )
+                    .where(OutboundEmail.dispute_id == dispute_id)
+                )
+                outbound_rows = result.fetchall()
+
+                if outbound_rows:
+                    for ep in outbound_episodes:
+                        for row in outbound_rows:
+                            # Match if within 30 seconds of episode creation
+                            diff = abs((row.created_at - ep.created_at).total_seconds())
+                            if diff <= 30:
+                                outbound_att_map.setdefault(ep.episode_id, []).append(
+                                    TimelineAttachment(
+                                        attachment_id=row.attachment_id,
+                                        file_name=row.file_name,
+                                        file_type=row.file_type or "application/octet-stream",
+                                        download_url=f"/dispute/api/v1/outbound/attachments/{row.attachment_id}/download",
+                                        source="outbound",
+                                    )
+                                )
+            except Exception as exc:
+                logger.warning(f"[dispute_id={dispute_id}] Failed to load outbound attachments: {exc}")
+
+        # ── Fetch FA sender names for ASSOCIATE episodes ──────────────────────
+        # Match each ASSOCIATE episode to the OutboundEmail sent within 30s,
+        # then join users to get the real name.
+        episode_actor_name: dict = {}   # episode_id → actor name string
+        associate_episodes = [ep for ep in episodes if ep.actor == "ASSOCIATE"]
+        if associate_episodes:
+            try:
+                from src.data.models.postgres.mailbox_models import OutboundEmail
+                from src.data.models.postgres.user_models import User
+                ob_result = await self.db.execute(
+                    select(
+                        OutboundEmail.outbound_id,
+                        OutboundEmail.created_at,
+                        OutboundEmail.sent_by_user_id,
+                        User.name,
+                    )
+                    .join(User, User.user_id == OutboundEmail.sent_by_user_id)
+                    .where(
+                        OutboundEmail.dispute_id == dispute_id,
+                        OutboundEmail.sent_by_user_id.isnot(None),
+                    )
+                )
+                ob_rows = ob_result.fetchall()
+                for ep in associate_episodes:
+                    for row in ob_rows:
+                        diff = abs((row.created_at - ep.created_at).total_seconds())
+                        if diff <= 30:
+                            episode_actor_name[ep.episode_id] = row.name
+                            break
+            except Exception as exc:
+                logger.warning(f"[dispute_id={dispute_id}] Failed to load FA actor names: {exc}")
+
+        # ── Build timeline ─────────────────────────────────────────────────────
         timeline = [
             TimelineEpisodeResponse(
                 episode_id=ep.episode_id,
                 actor=ep.actor,
+                actor_name=episode_actor_name.get(ep.episode_id),
                 episode_type=ep.episode_type,
                 content_text=ep.content_text,
                 created_at=ep.created_at,
+                attachments=(
+                    inbound_att_map.get(ep.email_id, [])
+                    if ep.actor == "CUSTOMER"
+                    else outbound_att_map.get(ep.episode_id, [])
+                ),
             )
             for ep in episodes
         ]

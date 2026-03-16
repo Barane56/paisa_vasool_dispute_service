@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 10
     ALLOWED_FILE_TYPES: List[str] = ["pdf"]
 
+    # Email attachment storage
+    ATTACHMENT_STORAGE_DIR: str = "/tmp/dispute_attachments"
+
+    # IMAP polling interval in seconds (Celery beat)
+    EMAIL_POLL_INTERVAL_SECONDS: int = 60
+
     # Memory / summarization threshold
     EPISODE_SUMMARIZE_THRESHOLD: int = 10
 

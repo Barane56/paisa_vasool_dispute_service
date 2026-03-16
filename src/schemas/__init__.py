@@ -6,7 +6,7 @@ from .dispute_schemas import (
     OpenQuestionResponse, AIAnalysisResponse,
     DisputeResponse, DisputeDetailResponse, DisputeListResponse,
     DisputeStatusUpdate, DisputeAssignRequest, DisputeAssignmentResponse,
-    TimelineEpisodeResponse, DisputeTimelineResponse,
+    TimelineEpisodeResponse, DisputeTimelineResponse, TimelineAttachment,
     MemorySummaryResponse, QuestionStatusUpdate,
     SupportingRefResponse, SupportingRefCreate, SupportingRefListResponse,
 )
@@ -20,7 +20,7 @@ __all__ = [
     "OpenQuestionResponse", "AIAnalysisResponse",
     "DisputeResponse", "DisputeDetailResponse", "DisputeListResponse",
     "DisputeStatusUpdate", "DisputeAssignRequest", "DisputeAssignmentResponse",
-    "TimelineEpisodeResponse", "DisputeTimelineResponse",
+    "TimelineEpisodeResponse", "DisputeTimelineResponse", "TimelineAttachment",
     "MemorySummaryResponse", "QuestionStatusUpdate",
     "SupportingRefResponse", "SupportingRefCreate", "SupportingRefListResponse",
 ]

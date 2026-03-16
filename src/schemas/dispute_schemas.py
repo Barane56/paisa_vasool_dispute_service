@@ -85,12 +85,23 @@ class DisputeAssignmentResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TimelineAttachment(BaseModel):
+    """A single attachment linked to a timeline episode."""
+    attachment_id: int
+    file_name: str
+    file_type: str
+    download_url: str          # ready-to-use URL path for the frontend
+    source: str                # "inbound" | "outbound"
+
+
 class TimelineEpisodeResponse(BaseModel):
     episode_id: int
     actor: str
+    actor_name: Optional[str] = None   # populated for ASSOCIATE episodes (FA real name)
     episode_type: str
     content_text: str
     created_at: datetime
+    attachments: List[TimelineAttachment] = []
     model_config = {"from_attributes": True}
 
 

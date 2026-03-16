@@ -356,3 +356,8 @@ zipp==3.23.0
     # via importlib-metadata
 zstandard==0.23.0
     # via langsmith
+
+
+# Email integration (added)
+openpyxl>=3.1.0          # Excel attachment extraction
+imapclient>=3.0.0        # Optional higher-level IMAP client (imaplib is stdlib)

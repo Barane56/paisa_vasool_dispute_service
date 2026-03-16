@@ -11,6 +11,7 @@ from .dispute_repository import (
     AnalysisSupportingRefRepository, DisputeRelationshipRepository,
 )
 from .memory_repository  import MemoryEpisodeRepository, MemorySummaryRepository, OpenQuestionRepository
+from .mailbox_repository import MailboxRepository, EmailInboxMessageRepository
 
 __all__ = [
     "UserRepository", "UserRoleRepository",
@@ -20,4 +21,5 @@ __all__ = [
     "DisputeAIAnalysisRepository", "DisputeAssignmentRepository",
     "AnalysisSupportingRefRepository", "DisputeRelationshipRepository",
     "MemoryEpisodeRepository", "MemorySummaryRepository", "OpenQuestionRepository",
+    "MailboxRepository", "EmailInboxMessageRepository",
 ]

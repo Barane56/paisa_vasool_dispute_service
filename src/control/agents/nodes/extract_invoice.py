@@ -22,7 +22,10 @@ async def node_extract_invoice_data_via_groq(
 
     if llm_client:
         try:
-            groq_extracted = await llm_client.extract_invoice_data(state["all_text"])
+            groq_extracted = await llm_client.extract_invoice_data(
+                state["all_text"],
+                attachment_metadata=state.get("attachment_metadata"),
+            )
             langfuse_context.update_current_observation(
                 input={"text_length": len(state["all_text"])},
                 output={"invoice_number": groq_extracted.get("invoice_number")},

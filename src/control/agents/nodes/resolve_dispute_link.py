@@ -85,6 +85,23 @@ async def node_resolve_dispute_link(
 
         return {**state, "existing_dispute_id": linked_id, "_needs_invoice_details": False}
 
+    # ── Scenario E — existing_dispute_id already resolved by task dispatch ──
+    # This handles follow-up emails where the task already matched via thread
+    # headers or DISP token before the pipeline started. Even if no invoice is
+    # matched in this email (e.g. very short reply body), we must NOT ask for
+    # invoice details again — the dispute context is already known.
+    if state.get("existing_dispute_id"):
+        linked_id = state["existing_dispute_id"]
+        logger.info(
+            f"[email_id={state['email_id']}] resolve: Scenario E — "
+            f"existing_dispute_id={linked_id} already set (follow-up reply) → "
+            f"skip clarification, reuse dispute context"
+        )
+        langfuse_context.update_current_observation(
+            output={"scenario": "E", "existing_dispute_id": linked_id}
+        )
+        return {**state, "_needs_invoice_details": False}
+
     # ── Scenario C ────────────────────────────────────────────────────────────
     logger.info(
         f"[email_id={state['email_id']}] resolve: Scenario C — "

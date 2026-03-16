@@ -95,6 +95,7 @@ async def _create_dispute(
     priority: str,
     description: str,
     parent_dispute_id: Optional[int] = None,
+    ownership_unverified: bool = False,
 ):
     from src.data.models.postgres.models import DisputeMaster
 
@@ -104,7 +105,7 @@ async def _create_dispute(
         payment_detail_id=payment_detail_id,
         customer_id=customer_id,
         dispute_type_id=dispute_type_id,
-        status="OPEN",
+        status="UNVERIFIED" if ownership_unverified else "OPEN",
         priority=priority,
         description=description,
         parent_dispute_id=parent_dispute_id,
@@ -256,6 +257,8 @@ async def _persist_inline_disputes(
 
         # ── Build description ─────────────────────────────────────────────────
         description = issue.get("description", "")
+        if issue.get("disputed_amount"):
+            description = f"{description} (Disputed amount: {issue['disputed_amount']})"
 
         # ── Create dispute row ────────────────────────────────────────────────
         inline_dispute = await _create_dispute(
@@ -437,6 +440,92 @@ async def _persist_forked_disputes(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Auto-response email sender
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _send_auto_response_email(
+    *,
+    dispute_id: int,
+    sender_email: str,
+    subject: str,
+    ai_response: str,
+    email_id: int,
+    db_session,
+    reply_to_message_id: int = None,
+    dispute_type_name: str = "Payment Dispute",
+) -> None:
+    """
+    Send the AI-generated response back to the customer via SMTP.
+    Uses the first active, unpaused mailbox. Saves an OutboundEmail audit record.
+    Errors are logged but never raise — email failure must not roll back the dispute.
+    """
+    try:
+        from src.data.repositories.mailbox_repository import MailboxRepository, EmailInboxMessageRepository
+        from src.core.services.outbound_email_service import OutboundEmailService
+        from src.data.models.postgres.mailbox_models import EmailInboxMessage
+        from sqlalchemy import select as _sa_select
+
+        mb_repo   = MailboxRepository(db_session)
+        mailboxes = await mb_repo.list_active_for_polling()
+        if not mailboxes:
+            logger.warning(
+                f"[email_id={email_id}] Auto-response: no active mailbox configured — "
+                f"response stored in DB only."
+            )
+            return
+
+        mailbox = mailboxes[0]
+
+        # Resolve the EmailInboxMessage.message_id for the inbound email that
+        # triggered this response so the reply lands in the same thread.
+        if reply_to_message_id is None:
+            _row = await db_session.execute(
+                _sa_select(EmailInboxMessage.message_id)
+                .where(
+                    EmailInboxMessage.email_inbox_id == email_id,
+                    EmailInboxMessage.source == "INBOUND",
+                )
+                .limit(1)
+            )
+            _r = _row.first()
+            reply_to_message_id = _r[0] if _r else None
+
+        # Build a clean reply subject — fall back to dispute type if subject is blank
+        _clean_subject = (subject or "").strip()
+        if not _clean_subject or _clean_subject.lower() in ("re:", "re: ", "fw:", "fwd:"):
+            _clean_subject = f"Re: {dispute_type_name}"
+        elif not _clean_subject.lower().startswith("re:"):
+            _clean_subject = f"Re: {_clean_subject}"
+        reply_subject = _clean_subject
+
+        # Convert the plain-text ai_response to minimal HTML
+        body_html = "<p>" + ai_response.replace("\n", "<br/>") + "</p>"
+
+        svc = OutboundEmailService(db_session)
+        await svc.compose_and_send(
+            dispute_id=dispute_id,
+            sent_by_user_id=None,         # NULL = AI-generated (not an FA)
+            to_email=sender_email,
+            subject=reply_subject,
+            body_html=body_html,
+            body_text=ai_response,
+            reply_to_message_id=reply_to_message_id,
+            attachments=[],
+        )
+        logger.info(
+            f"[email_id={email_id}] Auto-response sent to {sender_email} "
+            f"via mailbox {mailbox.email_address} for dispute_id={dispute_id} "
+            f"reply_to_message_id={reply_to_message_id}"
+        )
+    except Exception as exc:
+        logger.error(
+            f"[email_id={email_id}] Auto-response email send failed "
+            f"dispute_id={dispute_id} sender={sender_email}: {exc}",
+            exc_info=True,
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main node
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -479,7 +568,12 @@ async def node_persist_results(
 
         # ── 2. Create or reuse primary dispute ────────────────────────────────
         if not dispute_id:
+            # Build a description that includes disputed amount if available
             primary_description = state.get("description", "")
+            if state.get("disputed_amount"):
+                primary_description = (
+                    f"{primary_description} (Disputed amount: {state['disputed_amount']})"
+                )
 
             dispute = await _create_dispute(
                 db_session,
@@ -490,9 +584,22 @@ async def node_persist_results(
                 dispute_type_id=dispute_type.dispute_type_id,
                 priority=state.get("priority", "MEDIUM"),
                 description=primary_description,
+                ownership_unverified=state.get("_ownership_unverified", False),
             )
             dispute_id    = dispute.dispute_id
             dispute_token = dispute.dispute_token
+
+            # Flag unverified disputes with an activity log so FA knows why
+            if state.get("_ownership_unverified"):
+                db_session.add(DisputeActivityLog(
+                    dispute_id=dispute_id,
+                    action_type="OWNERSHIP_UNVERIFIED",
+                    notes=(
+                        f"Sender '{state.get('sender_email')}' could not be verified as "
+                        f"the invoice owner. Invoice details were withheld from the AI response. "
+                        f"FA should verify identity before proceeding."
+                    ),
+                ))
 
             # Resolve {DISPUTE_TOKEN} in the primary ai_response.
             # Also update per_issue_responses[0] so inline issues in step 9a
@@ -791,6 +898,51 @@ async def node_persist_results(
                 f"[email_id={email_id}] Context shift: created {len(forked_ids)} "
                 f"forked dispute(s): {forked_ids}"
             )
+
+            # Send a fresh-thread notification email for each forked dispute.
+            # No In-Reply-To header — this intentionally starts a new thread so
+            # the customer sees a distinct conversation for the new dispute.
+            from src.core.services.outbound_email_service import OutboundEmailService
+            _fork_svc = OutboundEmailService(db_session)
+            for _fork_id in forked_ids:
+                try:
+                    _fork_dispute = await _fork_svc.disp_repo.get_by_id(_fork_id)
+                    _fork_token   = getattr(_fork_dispute, "dispute_token", f"DISP-{_fork_id:05d}")
+                    _fork_type    = state.get("dispute_type_name") or "Payment Dispute"
+                    _fork_subject = f"[{_fork_token}] {_fork_type}"
+                    _fork_body    = (
+                        f"Dear Customer,\n\n"
+                        f"We have identified a new dispute in your recent correspondence "
+                        f"and raised it as a separate case.\n\n"
+                        f"Your reference: {_fork_token}\n\n"
+                        f"Please use this reference number in all future correspondence "
+                        f"regarding this specific issue.\n\n"
+                        f"Our team will be in touch shortly.\n\n"
+                        f"Regards,\n"
+                        f"Accounts Receivable Team"
+                    )
+                    await _fork_svc.compose_and_send(
+                        dispute_id=_fork_id,
+                        sent_by_user_id=None,
+                        to_email=state["sender_email"],
+                        subject=_fork_subject,
+                        body_html="<p>" + _fork_body.replace("\n", "<br/>") + "</p>",
+                        body_text=_fork_body,
+                        reply_to_message_id=None,   # fresh thread — no In-Reply-To
+                        force_new_thread=True,
+                        attachments=[],
+                    )
+                    logger.info(
+                        f"[email_id={email_id}] Fresh-thread notification sent "
+                        f"for forked dispute_id={_fork_id} token={_fork_token}"
+                    )
+                except Exception as _fork_mail_err:
+                    logger.error(
+                        f"[email_id={email_id}] Fork notification email failed "
+                        f"for dispute_id={_fork_id}: {_fork_mail_err}",
+                        exc_info=True,
+                    )
+
             if state.get("context_shift_reasoning"):
                 db_session.add(DisputeActivityLog(
                     dispute_id=dispute_id,
@@ -805,7 +957,23 @@ async def node_persist_results(
 
         await db_session.commit()
 
-        # ── 10. Async summarisation trigger ───────────────────────────────────
+        # ── 10. Send AI response via SMTP whenever ai_response is set ──────
+        # auto_response_generated=False means the AI flagged this for human
+        # review, but we still send an acknowledgement so the customer knows
+        # their email was received. The episode type (AI_RESPONSE vs
+        # AI_ACKNOWLEDGEMENT) already captures the distinction.
+        if state.get("ai_response"):
+            await _send_auto_response_email(
+                dispute_id=dispute_id,
+                sender_email=state["sender_email"],
+                subject=state.get("subject", ""),
+                ai_response=state["ai_response"],
+                email_id=email_id,
+                db_session=db_session,
+                dispute_type_name=state.get("dispute_type_name") or "Payment Dispute",
+            )
+
+        # ── 11. Async summarisation trigger ───────────────────────────────────
         from src.config.settings import settings
         ep_repo  = MemoryEpisodeRepository(db_session)
         ep_count = await ep_repo.count_for_dispute(dispute_id)

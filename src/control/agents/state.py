@@ -11,11 +11,14 @@ from typing import TypedDict, Optional, List, Dict
 
 class EmailProcessingState(TypedDict):
     # ── Input ─────────────────────────────────────────────────────────────────
-    email_id:         int
-    sender_email:     str
-    subject:          str
-    body_text:        str
-    attachment_texts: List[str]
+    email_id:            int
+    sender_email:        str
+    subject:             str
+    body_text:           str
+    attachment_texts:    List[str]
+    # Rich attachment metadata for multi-file prompt context
+    # Each item: {file_name, file_type, extracted_text}
+    attachment_metadata: List[Dict]
 
     # ── Text ──────────────────────────────────────────────────────────────────
     all_text: str
@@ -65,6 +68,7 @@ class EmailProcessingState(TypedDict):
 
     # ── Routing flags ─────────────────────────────────────────────────────────
     _needs_invoice_details:   bool
+    _ownership_unverified:    bool
     token_matched_dispute_id: Optional[int]   # Layer 1: DISP-XXXXX token match
 
     # ── Context-shift / fork detection (follow-up emails) ─────────────────────
@@ -101,11 +105,13 @@ class EmailProcessingState(TypedDict):
 # ─── Initial state factory ────────────────────────────────────────────────────
 
 def build_initial_state(
-    email_id:         int,
-    sender_email:     str,
-    subject:          str,
-    body_text:        str,
-    attachment_texts: List[str],
+    email_id:            int,
+    sender_email:        str,
+    subject:             str,
+    body_text:           str,
+    attachment_texts:    List[str],
+    attachment_metadata: Optional[List[Dict]] = None,
+    existing_dispute_id: Optional[int] = None,
 ) -> EmailProcessingState:
     return {
         "email_id":                    email_id,
@@ -113,6 +119,7 @@ def build_initial_state(
         "subject":                     subject,
         "body_text":                   body_text,
         "attachment_texts":            attachment_texts,
+        "attachment_metadata":         attachment_metadata or [],
         "all_text":                    "",
         "groq_extracted":              None,
         "candidate_invoice_numbers":   [],
@@ -132,7 +139,7 @@ def build_initial_state(
         "inline_issues":               [],
         "invoice_details":             None,
         "all_payment_details":         [],
-        "existing_dispute_id":         None,
+        "existing_dispute_id":         existing_dispute_id,
         "memory_summary":              None,
         "recent_episodes":             [],
         "pending_questions":           [],
@@ -142,6 +149,7 @@ def build_initial_state(
         "embedding_dispute_id":        None,
         "embedding_similarity":        0.0,
         "_needs_invoice_details":      False,
+        "_ownership_unverified":       False,
         "token_matched_dispute_id":    None,
         "context_shift_detected":      False,
         "context_shift_confidence":    0.0,

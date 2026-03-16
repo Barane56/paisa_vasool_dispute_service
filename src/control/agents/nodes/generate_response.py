@@ -118,6 +118,7 @@ async def _call_llm_for_issue(
     email_id: int,
     is_focused_issue: bool = False,
     focus_invoice_number: Optional[str] = None,
+    attachment_metadata: Optional[List[Dict]] = None,
 ) -> Dict:
     """
     Run one full generate_response.poml LLM call for a single issue.
@@ -141,6 +142,7 @@ async def _call_llm_for_issue(
         inline_issues=None,
         is_focused_issue=is_focused_issue,
         focus_invoice_number=focus_invoice_number,
+        attachment_metadata=attachment_metadata,
     )
 
     try:
@@ -211,15 +213,15 @@ def _build_needs_invoice_response(subject: str) -> str:
     return (
         f"Subject: RE: {subject}\n\n"
         f"Dear Customer,\n\n"
-        f"Thank you for contacting us. We have logged your query and assigned it "
-        f"to our Finance team for review.\n\n"
+        f"Thank you for contacting us. We have received your query and our "
+        f"Finance team will be happy to assist you.\n\n"
         f"To help us locate the relevant records quickly, could you please reply "
         f"with the following:\n\n"
         f"  - Invoice number (e.g. INV-1234)\n"
         f"  - Approximate invoice date\n"
         f"  - Amount in question (if applicable)\n\n"
-        f"Your reference: {{DISPUTE_TOKEN}}\n\n"
-        f"Please include this reference in all future correspondence.\n\n"
+        f"Once we receive these details, we will raise a ticket and follow up "
+        f"with you promptly.\n\n"
         f"Regards,\n"
         f"Accounts Receivable Team"
     )
@@ -302,6 +304,7 @@ async def node_generate_ai_response(
             dispute_token=dispute_token,
             email_id=email_id,
             is_focused_issue=False,
+            attachment_metadata=state.get("attachment_metadata"),
         )
         langfuse_context.update_current_observation(
             input={"prompt_name": RESPONSE_PROMPT_NAME, "prompt_version": RESPONSE_PROMPT_VERSION},
@@ -379,6 +382,7 @@ async def node_generate_ai_response(
             email_id=email_id,
             is_focused_issue=True,
             focus_invoice_number=spec.get("invoice_number"),
+            attachment_metadata=state.get("attachment_metadata"),
         )
         per_issue_responses.append(result)
         all_fa_questions.extend(result.get("questions_to_ask") or [])

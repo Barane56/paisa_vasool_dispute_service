@@ -147,3 +147,20 @@ class TaskEnqueueError(PaisaVasoolException):
             message=f"Failed to enqueue task '{task_name}'. Check Celery/Redis.",
             status_code=503,
         )
+
+
+class ResourceNotFoundError(NotFoundError):
+    pass
+
+
+class MailboxNotFoundError(NotFoundError):
+    def __init__(self, mailbox_id):
+        super().__init__("MailboxCredential", mailbox_id)
+
+
+class MailboxConnectionError(PaisaVasoolException):
+    def __init__(self, email_address: str, detail: str):
+        super().__init__(
+            message=f"Cannot connect to mailbox {email_address}: {detail}",
+            status_code=502,
+        )
