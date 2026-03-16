@@ -256,8 +256,6 @@ async def _persist_inline_disputes(
 
         # ── Build description ─────────────────────────────────────────────────
         description = issue.get("description", "")
-        if issue.get("disputed_amount"):
-            description = f"{description} (Disputed amount: {issue['disputed_amount']})"
 
         # ── Create dispute row ────────────────────────────────────────────────
         inline_dispute = await _create_dispute(
@@ -481,12 +479,7 @@ async def node_persist_results(
 
         # ── 2. Create or reuse primary dispute ────────────────────────────────
         if not dispute_id:
-            # Build a description that includes disputed amount if available
             primary_description = state.get("description", "")
-            if state.get("disputed_amount"):
-                primary_description = (
-                    f"{primary_description} (Disputed amount: {state['disputed_amount']})"
-                )
 
             dispute = await _create_dispute(
                 db_session,
