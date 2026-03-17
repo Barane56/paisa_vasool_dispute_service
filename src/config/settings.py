@@ -14,11 +14,11 @@ class Settings(BaseSettings):
 
     # Security – Dispute service shares the same JWT secret as auth service
     # so it can validate tokens issued by auth service without calling it
-    SECRET_KEY: str = "change-me-in-production"
+    SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
 
     # Database (shared DB, same as auth service)
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/paisa_vasool"
+    DATABASE_URL: str = ""
     DATABASE_POOL_SIZE: int = 10
     DATABASE_MAX_OVERFLOW: int = 20
 
@@ -53,9 +53,9 @@ class Settings(BaseSettings):
     # These are used exclusively by the AI auto-responder when sending replies
     # on behalf of the system.  Human FA replies still use the mailbox credentials.
     
-    AGENT_EMAIL: str = "paisavasoolagent@gmail.com"
-    AGENT_EMAIL_PASSWORD: str = "eollonjbzncpywed"   # plain-text; encoded at runtime
-    AGENT_SMTP_HOST: str = "smtp.gmail.com"
+    AGENT_EMAIL: str = ""
+    AGENT_EMAIL_PASSWORD: str = ""   # plain-text; encoded at runtime
+    AGENT_SMTP_HOST: str = ""
     AGENT_SMTP_PORT: int = 587
     AGENT_SMTP_USE_TLS: bool = True                # True = STARTTLS on port 587
 
