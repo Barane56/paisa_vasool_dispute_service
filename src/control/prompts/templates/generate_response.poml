@@ -64,9 +64,22 @@
       - A closing: "Regards,\nAccounts Receivable Team"
       - Footer — write this line EXACTLY as shown, verbatim, do NOT replace the placeholder:
             Your dispute reference: {DISPUTE_TOKEN}
+            Do Not Reply to this email. This is an Auto Generated Response.
         The placeholder {DISPUTE_TOKEN} must appear literally in your output.
         The system replaces it with the real reference number after you respond.
       - Ask the customer to quote this reference in all future correspondence.
+
+    INVOICE DATA INSTRUCTIONS — critical, read carefully:
+      - The "Invoice on Record" section above contains a JSON object.
+      - The "line_items" key inside that JSON is an array of individual invoice line items.
+        Each item has: description, qty/quantity, unit_price, total.
+      - If the customer asks about line items, individual charges, what they were billed for,
+        or item-level breakdowns: READ the line_items array from the invoice JSON and list
+        each item's description, quantity and amount in your response.
+      - If line_items is null or an empty array, state clearly that line item details are
+        not available in the system and the FA team will follow up.
+      - NEVER say you don't have line item information if line_items is a non-empty array
+        in the invoice JSON — the data IS there, you must read it and present it.
 
     TONE AND STYLE — apply to every email regardless of type:
       - Write as a thoughtful human colleague, not a ticketing system.

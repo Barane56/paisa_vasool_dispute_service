@@ -58,11 +58,12 @@ class DisputeDetailResponse(DisputeResponse):
     latest_analysis: Optional[AIAnalysisResponse] = None
     open_questions_count: int = 0
     assigned_to: Optional[str] = None
+    has_new_customer_message: bool = False   # True when latest episode is from CUSTOMER
 
 
 class DisputeListResponse(BaseModel):
     total: int
-    items: List[DisputeResponse]
+    items: List[DisputeDetailResponse]
 
 
 class DisputeStatusUpdate(BaseModel):

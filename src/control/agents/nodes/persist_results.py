@@ -257,8 +257,6 @@ async def _persist_inline_disputes(
 
         # ── Build description ─────────────────────────────────────────────────
         description = issue.get("description", "")
-        if issue.get("disputed_amount"):
-            description = f"{description} (Disputed amount: {issue['disputed_amount']})"
 
         # ── Create dispute row ────────────────────────────────────────────────
         inline_dispute = await _create_dispute(
@@ -592,12 +590,8 @@ async def node_persist_results(
 
         # ── 2. Create or reuse primary dispute ────────────────────────────────
         if not dispute_id:
-            # Build a description that includes disputed amount if available
+            # Build primary description
             primary_description = state.get("description", "")
-            if state.get("disputed_amount"):
-                primary_description = (
-                    f"{primary_description} (Disputed amount: {state['disputed_amount']})"
-                )
 
             dispute = await _create_dispute(
                 db_session,
@@ -997,6 +991,54 @@ async def node_persist_results(
                 db_session=db_session,
                 dispute_type_name=state.get("dispute_type_name") or "Payment Dispute",
             )
+
+        # ── 10a. Send individual emails for each INLINE dispute ───────────────
+        # Each inline dispute has its own resolved ai_response (stored in
+        # pir_by_index). We send a separate email per inline dispute so the
+        # customer receives one email per issue with the correct dispute token.
+        if inline_dispute_ids:
+            pir_by_index_local = {
+                r["issue_index"]: r
+                for r in (state.get("per_issue_responses") or [])
+            }
+            for seq_idx, iid in enumerate(inline_dispute_ids, 2):
+                issue_idx = seq_idx - 1
+                pir       = pir_by_index_local.get(issue_idx)
+                if not pir:
+                    continue
+                token_str     = f"DISP-{iid:05d}"
+                resolved_resp = (
+                    pir["ai_response"]
+                    .replace(f"{{DISPUTE_TOKEN_{seq_idx}}}", token_str)
+                    .replace("{DISPUTE_TOKEN}", token_str)
+                ) if pir.get("ai_response") else None
+
+                if resolved_resp:
+                    try:
+                        inline_type_name = (
+                            inline_issues[issue_idx - 1].get("dispute_type_name")
+                            if inline_issues and len(inline_issues) >= issue_idx
+                            else "Payment Dispute"
+                        ) or "Payment Dispute"
+                        await _send_auto_response_email(
+                            dispute_id=iid,
+                            sender_email=state["sender_email"],
+                            subject=state.get("subject", ""),
+                            ai_response=resolved_resp,
+                            email_id=email_id,
+                            db_session=db_session,
+                            dispute_type_name=inline_type_name,
+                        )
+                        logger.info(
+                            f"[email_id={email_id}] Sent inline auto-response "
+                            f"for dispute_id={iid} token={token_str}"
+                        )
+                    except Exception as _inline_mail_err:
+                        logger.error(
+                            f"[email_id={email_id}] Inline auto-response email failed "
+                            f"for dispute_id={iid}: {_inline_mail_err}",
+                            exc_info=True,
+                        )
 
         # ── 11. Async summarisation trigger ───────────────────────────────────
         from src.config.settings import settings
