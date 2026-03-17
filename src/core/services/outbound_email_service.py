@@ -36,6 +36,8 @@ ATTACHMENT_STORAGE_DIR = Path(getattr(settings, "ATTACHMENT_STORAGE_DIR", "/tmp/
 OUTBOUND_SUBDIR = ATTACHMENT_STORAGE_DIR / "outbound"
 OUTBOUND_SUBDIR.mkdir(parents=True, exist_ok=True)
 
+from src.core.services.gcs_service import upload_attachment as _gcs_upload, get_public_url as _gcs_url
+
 
 def _safe_filename(name: str) -> str:
     return re.sub(r"[^\w.\-]", "_", name)[:100]
@@ -125,19 +127,26 @@ class OutboundEmailService:
     # ── Save uploaded attachment files ────────────────────────────────────────
 
     async def _save_upload(self, file: UploadFile, outbound_id: int) -> dict:
-        safe_name  = _safe_filename(file.filename or "attachment")
-        unique_name = f"{uuid.uuid4().hex}_{safe_name}"
-        subdir = OUTBOUND_SUBDIR / str(outbound_id)
-        subdir.mkdir(parents=True, exist_ok=True)
-        full_path = subdir / unique_name
-        content   = await file.read()
-        full_path.write_bytes(content)
-        ext = Path(file.filename or "").suffix.lower().lstrip(".") or "bin"
+        safe_name   = _safe_filename(file.filename or "attachment")
+        file_bytes  = await file.read()
+        ext         = Path(file.filename or "").suffix.lower().lstrip(".") or "bin"
+
+        if settings.GCS_ENABLED:
+            blob_path = _gcs_upload(file_bytes, file.filename or safe_name,
+                                    folder=f"outbound/dispute_{outbound_id}")
+        else:
+            # Local fallback
+            unique_name = f"{uuid.uuid4().hex}_{safe_name}"
+            subdir = OUTBOUND_SUBDIR / str(outbound_id)
+            subdir.mkdir(parents=True, exist_ok=True)
+            (subdir / unique_name).write_bytes(file_bytes)
+            blob_path = str(Path("outbound") / str(outbound_id) / unique_name)
+
         return {
             "file_name": file.filename or safe_name,
             "file_type": ext,
-            "file_size": len(content),
-            "file_path": str(Path("outbound") / str(outbound_id) / unique_name),
+            "file_size": len(file_bytes),
+            "file_path": blob_path,
         }
 
     # ── Main compose + send ───────────────────────────────────────────────────

@@ -23,9 +23,9 @@ class Settings(BaseSettings):
     DATABASE_MAX_OVERFLOW: int = 20
 
     # Redis & Celery
-    REDIS_URL: str = "redis://localhost:6379/0"
-    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
-    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
+    REDIS_URL: str = ""
+    CELERY_BROKER_URL: str = ""
+    CELERY_RESULT_BACKEND: str = ""
 
     # Groq API (replaces OpenAI)
     GROQ_API_KEY: str = ""
@@ -46,8 +46,15 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 10
     ALLOWED_FILE_TYPES: List[str] = ["pdf"]
 
-    # Email attachment storage
+    # Email attachment storage (local fallback — not used when GCS is enabled)
     ATTACHMENT_STORAGE_DIR: str = "/tmp/dispute_attachments"
+
+    # ── Google Cloud Storage ──────────────────────────────────────────────────
+    GCS_ENABLED: bool = True
+    GCS_PROJECT_ID: str = ""
+    GCS_BUCKET_NAME: str = ""
+    GCS_BUCKET_PREFIX: str = ""
+    GCS_TARGET_SERVICE_ACCOUNT: str = ""
 
     # ── AI Agent outbound email credentials ──────────────────────────────────
     # These are used exclusively by the AI auto-responder when sending replies

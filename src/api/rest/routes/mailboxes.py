@@ -48,6 +48,7 @@ send_router   = APIRouter(prefix="/disputes",   tags=["Send Email"])
 outbox_router = APIRouter(prefix="/outbound",   tags=["Outbound Emails"])
 
 STORAGE_DIR = Path(getattr(settings, "ATTACHMENT_STORAGE_DIR", "/tmp/dispute_attachments"))
+from src.core.services.gcs_service import get_public_url as _gcs_url
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -226,25 +227,22 @@ async def messages_for_dispute(
 @inbox_router.get("/attachments/{attachment_id}/download")
 async def download_inbound_attachment(
     attachment_id: int,
-    db: AsyncSession = Depends(get_db),
+    svc: MailboxService = Depends(_mb_svc),
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Serve an inbound attachment file."""
-    from sqlalchemy import select
-    from src.data.models.postgres.mailbox_models import EmailMessageAttachment
+    try:
+        att = await svc.get_inbound_attachment(attachment_id)
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=e.message)
 
-    result = await db.execute(
-        select(EmailMessageAttachment)
-        .where(EmailMessageAttachment.attachment_id == attachment_id)
-    )
-    att = result.scalar_one_or_none()
-    if not att:
-        raise HTTPException(status_code=404, detail="Attachment not found")
+    if settings.GCS_ENABLED:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=_gcs_url(att.file_path), status_code=302)
 
     full_path = STORAGE_DIR / att.file_path
     if not full_path.exists():
         raise HTTPException(status_code=404, detail="Attachment file not found on server")
-
     return FileResponse(path=str(full_path), filename=att.file_name, media_type="application/octet-stream")
 
 
@@ -325,23 +323,13 @@ async def list_outbound_for_dispute(
 @outbox_router.get("/{outbound_id}", response_model=OutboundEmailResponse)
 async def get_outbound_email(
     outbound_id: int,
-    svc: OutboundEmailService = Depends(_out_svc),
+    svc: MailboxService = Depends(_mb_svc),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload, joinedload
-    from src.data.models.postgres.mailbox_models import OutboundEmail
-    result = await svc.db.execute(
-        select(OutboundEmail)
-        .options(
-            selectinload(OutboundEmail.attachments),
-            joinedload(OutboundEmail.sender),
-        )
-        .where(OutboundEmail.outbound_id == outbound_id)
-    )
-    email = result.scalar_one_or_none()
-    if not email:
-        raise HTTPException(status_code=404, detail=f"Outbound email {outbound_id} not found")
+    try:
+        email = await svc.get_outbound_email_by_id(outbound_id)
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=e.message)
     return OutboundEmailResponse.from_orm_with_sender(email)
 
 
@@ -357,8 +345,11 @@ async def download_outbound_attachment(
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=e.message)
 
+    if settings.GCS_ENABLED:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=_gcs_url(att.file_path), status_code=302)
+
     full_path = STORAGE_DIR / att.file_path
     if not full_path.exists():
         raise HTTPException(status_code=404, detail="Attachment file not found on server")
-
     return FileResponse(path=str(full_path), filename=att.file_name, media_type="application/octet-stream")

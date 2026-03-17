@@ -27,4 +27,5 @@ dependencies = [
     "reportlab>=4.4.10",
     "sqlalchemy==2.0.40",
     "uvicorn[standard]==0.34.2",
+    "google-cloud-storage>=3.9.0",
 ]

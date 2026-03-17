@@ -34,6 +34,9 @@ async def get_current_user(
     #     token = credentials.credentials
     # else:
     token = request.cookies.get("access_token")
+    # if token is None:
+    #     # try to get from authorization headers 
+    #     token = request.headers.get('access_token').split(' ')[1]
 
     # print(token)
     # print(f"Received token: {token[:10]}...")  # Debug: log the start of the token

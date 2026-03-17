@@ -128,3 +128,33 @@ class MailboxService:
 
     async def list_messages_for_dispute(self, dispute_id: int) -> List[EmailInboxMessage]:
         return await self.msg_repo.list_for_dispute(dispute_id)
+
+    async def get_inbound_attachment(self, attachment_id: int):
+        """Fetch an inbound EmailMessageAttachment record by ID."""
+        from sqlalchemy import select
+        from src.data.models.postgres.mailbox_models import EmailMessageAttachment
+        result = await self.db.execute(
+            select(EmailMessageAttachment)
+            .where(EmailMessageAttachment.attachment_id == attachment_id)
+        )
+        att = result.scalar_one_or_none()
+        if not att:
+            from src.core.exceptions import ResourceNotFoundError
+            raise ResourceNotFoundError("EmailMessageAttachment", attachment_id)
+        return att
+
+    async def get_outbound_email_by_id(self, outbound_id: int):
+        """Fetch a single OutboundEmail with attachments and sender."""
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload, joinedload
+        from src.data.models.postgres.mailbox_models import OutboundEmail
+        result = await self.db.execute(
+            select(OutboundEmail)
+            .options(selectinload(OutboundEmail.attachments), joinedload(OutboundEmail.sender))
+            .where(OutboundEmail.outbound_id == outbound_id)
+        )
+        email = result.scalar_one_or_none()
+        if not email:
+            from src.core.exceptions import ResourceNotFoundError
+            raise ResourceNotFoundError("OutboundEmail", outbound_id)
+        return email

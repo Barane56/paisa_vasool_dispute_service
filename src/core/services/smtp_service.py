@@ -37,6 +37,7 @@ from typing import List, Optional, Tuple
 
 from src.config.settings import settings
 from src.core.services.imap_service import decode_password
+from src.core.services.gcs_service import download_attachment as _gcs_download
 
 logger = logging.getLogger(__name__)
 
@@ -151,13 +152,21 @@ def send_email(
 
     # Attach files
     for rel_path, filename in (attachment_paths or []):
-        full_path = ATTACHMENT_STORAGE_DIR / rel_path
-        if not full_path.exists():
-            logger.warning(f"Attachment not found, skipping: {full_path}")
+        try:
+            if settings.GCS_ENABLED:
+                file_bytes = _gcs_download(rel_path)
+            else:
+                full_path = ATTACHMENT_STORAGE_DIR / rel_path
+                if not full_path.exists():
+                    logger.warning(f"Attachment not found, skipping: {full_path}")
+                    continue
+                with open(full_path, "rb") as f:
+                    file_bytes = f.read()
+        except Exception as att_err:
+            logger.warning(f"Could not load attachment {rel_path}: {att_err}")
             continue
-        with open(full_path, "rb") as f:
-            part = MIMEBase("application", "octet-stream")
-            part.set_payload(f.read())
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(file_bytes)
         encoders.encode_base64(part)
         part.add_header("Content-Disposition", "attachment", filename=filename)
         msg.attach(part)

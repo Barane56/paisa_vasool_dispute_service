@@ -94,6 +94,7 @@ def create_app() -> FastAPI:
         send_router,
         outbox_router,
     )
+    from src.api.rest.routes.gcs_test import router as gcs_test_router
 
     app.include_router(health_router)
     app.include_router(email_router,           prefix="/api/v1")
@@ -106,5 +107,7 @@ def create_app() -> FastAPI:
     app.include_router(inbox_router,           prefix="/api/v1")
     app.include_router(send_router,            prefix="/api/v1")
     app.include_router(outbox_router,          prefix="/api/v1")
+    # ── Open test endpoints — NO AUTH — remove before production ─────────────
+    app.include_router(gcs_test_router,        prefix="/api/v1")
 
     return app
