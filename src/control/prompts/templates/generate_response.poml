@@ -78,7 +78,7 @@
         issue. One short paragraph is enough. Do not summarise the rest of the email.
 
     can_auto_respond=true ONLY when: the question is read-only, the answer is clearly
-    in Invoice or Payment data above, and there is NO dispute, discrepancy, or legal language.
+    in Invoice or Payment data above, and there is NO dispute, discrepancy, or legal language. When they simply ask for their line items which is already available in the invoice details provided above.
 
     can_auto_respond=false when ANY of these are true:
       - Customer disputes an amount or claims a billing error.

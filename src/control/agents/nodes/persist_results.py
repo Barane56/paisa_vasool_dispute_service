@@ -443,6 +443,29 @@ async def _persist_forked_disputes(
 # Auto-response email sender
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent SMTP credentials builder
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_agent_smtp_override() -> dict:
+    """
+    Build the SMTP override dict for AI-agent auto-responses.
+    Pulls credentials from settings so they can be managed centrally via
+    environment variables / .env without touching code.
+    """
+    from src.config.settings import settings
+    from src.core.services.imap_service import encode_password
+
+    return {
+        "smtp_host":    settings.AGENT_SMTP_HOST,
+        "smtp_port":    settings.AGENT_SMTP_PORT,
+        "smtp_use_tls": settings.AGENT_SMTP_USE_TLS,
+        "username":     settings.AGENT_EMAIL,
+        "password_enc": encode_password(settings.AGENT_EMAIL_PASSWORD),
+        "from_address": settings.AGENT_EMAIL,
+    }
+
+
 async def _send_auto_response_email(
     *,
     dispute_id: int,
@@ -511,6 +534,7 @@ async def _send_auto_response_email(
             body_text=ai_response,
             reply_to_message_id=reply_to_message_id,
             attachments=[],
+            override_smtp_credentials=_build_agent_smtp_override(),
         )
         logger.info(
             f"[email_id={email_id}] Auto-response sent to {sender_email} "
@@ -931,6 +955,7 @@ async def node_persist_results(
                         reply_to_message_id=None,   # fresh thread — no In-Reply-To
                         force_new_thread=True,
                         attachments=[],
+                        override_smtp_credentials=_build_agent_smtp_override(),
                     )
                     logger.info(
                         f"[email_id={email_id}] Fresh-thread notification sent "

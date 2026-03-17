@@ -90,30 +90,52 @@ async def node_fetch_context(
 
         if open_disputes:
             # Level 1: customer + invoice + dispute type (most precise)
+            # Normalise both sides to lowercase + collapsed whitespace so LLM
+            # capitalisation variance ("pricing mismatch" vs "Pricing Mismatch")
+            # does not cause a miss.
             if matched_invoice_id and dispute_type_name:
+                _norm = lambda s: " ".join((s or "").lower().split())
+                _norm_type = _norm(dispute_type_name)
                 for d in open_disputes:
                     if (
                         d.invoice_id == matched_invoice_id
                         and d.dispute_type
-                        and d.dispute_type.reason_name == dispute_type_name
+                        and _norm(d.dispute_type.reason_name) == _norm_type
                     ):
                         matched_dispute = d
                         logger.info(
                             f"[email_id={state['email_id']}] L1 match: "
-                            f"customer+invoice+type → dispute_id={d.dispute_id}"
+                            f"customer+invoice+type → dispute_id={d.dispute_id} "
+                            f"(matched '{d.dispute_type.reason_name}' ≈ '{dispute_type_name}')"
                         )
                         break
 
             # Level 2: customer + invoice (type mismatch / re-open)
+            # If multiple disputes share the same invoice, prefer the one whose
+            # type name is closest to what the LLM returned — handles LLM paraphrase
+            # cases where L1 missed due to minor wording differences.
             if not matched_dispute and matched_invoice_id:
-                for d in open_disputes:
-                    if d.invoice_id == matched_invoice_id:
-                        matched_dispute = d
-                        logger.info(
-                            f"[email_id={state['email_id']}] L2 match: "
-                            f"customer+invoice → dispute_id={d.dispute_id}"
-                        )
-                        break
+                invoice_disputes = [d for d in open_disputes if d.invoice_id == matched_invoice_id]
+                if invoice_disputes:
+                    if len(invoice_disputes) == 1:
+                        matched_dispute = invoice_disputes[0]
+                    else:
+                        # Score each by normalised type name similarity
+                        _norm = lambda s: " ".join((s or "").lower().split())
+                        _norm_type = _norm(dispute_type_name)
+                        def _score(d):
+                            name = _norm(d.dispute_type.reason_name if d.dispute_type else "")
+                            if name == _norm_type:
+                                return 2   # exact match
+                            if _norm_type and (name in _norm_type or _norm_type in name):
+                                return 1   # partial match
+                            return 0
+                        matched_dispute = max(invoice_disputes, key=_score)
+                    logger.info(
+                        f"[email_id={state['email_id']}] L2 match: "
+                        f"customer+invoice → dispute_id={matched_dispute.dispute_id} "
+                        f"(from {len(invoice_disputes)} candidate(s))"
+                    )
 
             # Level 3: follow-up to cold mail (dispute exists but had no invoice yet)
             if not matched_dispute and matched_invoice_id:

@@ -49,8 +49,18 @@ class Settings(BaseSettings):
     # Email attachment storage
     ATTACHMENT_STORAGE_DIR: str = "/tmp/dispute_attachments"
 
+    # ── AI Agent outbound email credentials ──────────────────────────────────
+    # These are used exclusively by the AI auto-responder when sending replies
+    # on behalf of the system.  Human FA replies still use the mailbox credentials.
+    
+    AGENT_EMAIL: str = "paisavasoolagent@gmail.com"
+    AGENT_EMAIL_PASSWORD: str = "eollonjbzncpywed"   # plain-text; encoded at runtime
+    AGENT_SMTP_HOST: str = "smtp.gmail.com"
+    AGENT_SMTP_PORT: int = 587
+    AGENT_SMTP_USE_TLS: bool = True                # True = STARTTLS on port 587
+
     # IMAP polling interval in seconds (Celery beat)
-    EMAIL_POLL_INTERVAL_SECONDS: int = 60
+    EMAIL_POLL_INTERVAL_SECONDS: int = 20
 
     # Memory / summarization threshold
     EPISODE_SUMMARIZE_THRESHOLD: int = 10

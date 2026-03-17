@@ -341,6 +341,7 @@ async def node_generate_ai_response(
             "dispute_token":    "{DISPUTE_TOKEN}",
         }
     ]
+    # print(all_issues_spec)
     for seq, iss in enumerate(inline_issues, 2):
         all_issues_spec.append({
             "issue_index":      seq - 1,
@@ -351,7 +352,7 @@ async def node_generate_ai_response(
             "invoice_number":   iss.get("invoice_number"),
             "dispute_token":    f"{{DISPUTE_TOKEN_{seq}}}",
         })
-
+    # print(all_issues_spec)
     per_issue_responses: List[Dict] = []
     all_fa_questions:    List[str]  = []
 
@@ -362,6 +363,8 @@ async def node_generate_ai_response(
             fallback_invoice_details=state.get("invoice_details"),
             fallback_payment_details=state.get("all_payment_details") or [],
         )
+
+        print(inv_ctx, pay_ctx)
 
         result = await _call_llm_for_issue(
             llm_client=llm_client,

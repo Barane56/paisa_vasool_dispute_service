@@ -154,6 +154,11 @@ class OutboundEmailService:
         reply_to_message_id: Optional[int] = None,
         force_new_thread:    bool = False,
         attachments:         Optional[List[UploadFile]] = None,
+        # Optional override for AI-agent sends — uses dedicated agent SMTP
+        # credentials instead of the mailbox credentials.
+        # Pass a dict with keys: smtp_host, smtp_port, smtp_use_tls,
+        # username, password_enc, from_address.
+        override_smtp_credentials: Optional[dict] = None,
     ) -> OutboundEmail:
         """
         Compose an email, save it, upload attachments, then send via SMTP.
@@ -212,10 +217,18 @@ class OutboundEmailService:
         our_message_id = generate_message_id(mb.email_address)
 
         # 5. Create OutboundEmail record (PENDING)
+        # When override_smtp_credentials are provided (AI-agent sends), the email
+        # is sent FROM the agent address; we still record the mailbox's address
+        # in from_email so replies thread back to the correct inbox.
+        send_from_address = (
+            override_smtp_credentials["from_address"]
+            if override_smtp_credentials
+            else mb.email_address
+        )
         outbound = OutboundEmail(
             dispute_id=dispute_id,
             sent_by_user_id=sent_by_user_id,
-            from_email=mb.email_address,
+            from_email=send_from_address,
             to_email=to_email,
             subject=subject,
             body_html=body_html,
@@ -247,15 +260,31 @@ class OutboundEmailService:
         await self.db.flush()
 
         # 7. Send via SMTP
-        smtp_host = mb.effective_smtp_host
+        # If override credentials are provided (AI-agent auto-responses), use
+        # them; otherwise fall back to the mailbox's own credentials.
+        if override_smtp_credentials:
+            smtp_host    = override_smtp_credentials["smtp_host"]
+            smtp_port    = override_smtp_credentials["smtp_port"]
+            smtp_use_tls = override_smtp_credentials["smtp_use_tls"]
+            smtp_user    = override_smtp_credentials["username"]
+            smtp_pass    = override_smtp_credentials["password_enc"]
+            smtp_from    = override_smtp_credentials["from_address"]
+        else:
+            smtp_host    = mb.effective_smtp_host
+            smtp_port    = mb.smtp_port
+            smtp_use_tls = mb.smtp_use_tls
+            smtp_user    = mb.email_address
+            smtp_pass    = mb.password_enc
+            smtp_from    = mb.email_address
+
         try:
             send_email(
                 smtp_host=smtp_host,
-                smtp_port=mb.smtp_port,
-                smtp_use_tls=mb.smtp_use_tls,
-                username=mb.email_address,
-                password_enc=mb.password_enc,
-                from_address=mb.email_address,
+                smtp_port=smtp_port,
+                smtp_use_tls=smtp_use_tls,
+                username=smtp_user,
+                password_enc=smtp_pass,
+                from_address=smtp_from,
                 to_address=to_email,
                 subject=subject,
                 body_html=body_html,
