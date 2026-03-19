@@ -32,7 +32,7 @@ ATTACHMENT_STORAGE_DIR = Path(getattr(settings, "ATTACHMENT_STORAGE_DIR", "/tmp/
 ATTACHMENT_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 # GCS — imported lazily so the module loads even without google-cloud-storage installed
-from src.core.services.gcs_service import upload_attachment as _gcs_upload, get_public_url as _gcs_url
+from src.core.services.gcs_service import upload_attachment as _gcs_upload, get_public_url as _gcs_url, GCSUnavailable
 
 # ── Dispute-token regex ───────────────────────────────────────────────────────
 DISPUTE_TOKEN_RE = re.compile(r"\bDISP-([A-Z0-9]{8,32})\b", re.IGNORECASE)
@@ -168,12 +168,23 @@ def _extract_text_from_attachment(file_bytes: bytes, filename: str, mime_type: s
 
 def _save_attachment(file_bytes: bytes, original_filename: str, mailbox_id: int) -> str:
     """
-    Upload attachment bytes to GCS.
-    Returns the GCS blob path stored in DB as file_path.
+    Save attachment — GCS if enabled and reachable, local filesystem otherwise.
+    Returns path stored in DB as file_path.
     """
     if settings.GCS_ENABLED:
-        return _gcs_upload(file_bytes, original_filename, folder=f"inbound/mailbox_{mailbox_id}")
-    # Local fallback (GCS disabled)
+        try:
+            return _gcs_upload(file_bytes, original_filename, folder=f"inbound/mailbox_{mailbox_id}")
+        except GCSUnavailable as gcs_err:
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                f"GCS upload failed for inbound attachment, falling back to local: {gcs_err}"
+            )
+        except Exception as gcs_err:
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                f"GCS upload error for inbound attachment, falling back to local: {gcs_err}"
+            )
+    # Local fallback
     safe_name = re.sub(r"[^\w.\-]", "_", original_filename)[:100]
     unique_name = f"{uuid.uuid4().hex}_{safe_name}"
     subdir = ATTACHMENT_STORAGE_DIR / str(mailbox_id)

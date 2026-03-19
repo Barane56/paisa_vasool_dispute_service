@@ -682,6 +682,13 @@ async def node_persist_results(
         db_session.add(email_episode)
         await db_session.flush()
 
+        # ── Mark dispute as having a new unread customer message ──────────────
+        try:
+            from src.data.repositories.dispute_repository import DisputeNewMessageRepository
+            await DisputeNewMessageRepository(db_session).set_new_message(dispute_id)
+        except Exception as nm_err:
+            logger.warning(f"[email_id={email_id}] Could not set new_message flag: {nm_err}")
+
         # ── 4. AI analysis record (written after customer episode) ────────────
         analysis = DisputeAIAnalysis(
             dispute_id=dispute_id,
@@ -973,6 +980,69 @@ async def node_persist_results(
                         f"Forked: {forked_ids}."
                     ),
                 ))
+
+        # ── 9c. Attach existing DisputeDocuments from the same customer/domain ──
+        # When a dispute is first created for a customer, any previously uploaded
+        # supporting documents that belong to this customer (matched by customer_id
+        # or email domain) are linked to the new dispute so FAs have full context.
+        # This mirrors the agent's ownership logic in identify_invoice.py.
+        try:
+            from src.data.models.postgres.dispute_models import DisputeDocument
+            from src.control.agents.nodes.identify_invoice import (
+                _extract_domain, _is_generic_domain,
+            )
+            from sqlalchemy import select as _sa_sel, or_ as _or_
+
+            sender     = (state.get("customer_id") or state.get("sender_email") or "").lower().strip()
+            domain     = _extract_domain(sender) if sender else None
+            is_generic = _is_generic_domain(domain) if domain else True
+
+            if sender:
+                # Match docs where the customer_id (stored as the creating FA's
+                # customer_id on the dispute_documents row) matches the sender email
+                # or their corporate domain.
+                conditions = [DisputeDocument.dispute_id.in_(
+                    _sa_sel(DisputeDocument.dispute_id).where(
+                        DisputeDocument.dispute_id != dispute_id
+                    ).scalar_subquery()
+                )]
+                # We look for any existing docs on OTHER disputes for this same customer
+                # (same sender email as customer_id) and copy references — not files.
+                # Implementation: find dispute_ids for this customer, then copy their docs.
+                from src.data.repositories.dispute_repository import DisputeRepository as _DR
+                _dr = _DR(db_session)
+                sibling_disputes = await _dr.get_by_customer(sender)
+                sibling_ids = [d.dispute_id for d in sibling_disputes if d.dispute_id != dispute_id]
+
+                if sibling_ids and not is_generic:
+                    sibling_docs = (await db_session.execute(
+                        _sa_sel(DisputeDocument)
+                        .where(DisputeDocument.dispute_id.in_(sibling_ids))
+                        .order_by(DisputeDocument.created_at.desc())
+                        .limit(20)
+                    )).scalars().all()
+
+                    for sdoc in sibling_docs:
+                        # Create a copy linked to the new dispute (same file_path, no re-upload)
+                        new_doc = DisputeDocument(
+                            dispute_id=dispute_id,
+                            uploaded_by=sdoc.uploaded_by,
+                            file_name=sdoc.file_name,
+                            file_type=sdoc.file_type,
+                            file_size=sdoc.file_size,
+                            file_path=sdoc.file_path,   # shared reference, not a copy
+                            display_name=sdoc.display_name,
+                            notes=f"[Carried over from dispute #{sdoc.dispute_id}] {sdoc.notes or ''}".strip(),
+                        )
+                        db_session.add(new_doc)
+
+                    if sibling_docs:
+                        logger.info(
+                            f"[email_id={state['email_id']}] Carried over {len(sibling_docs)} "
+                            f"docs from {len(sibling_ids)} prior dispute(s) for customer={sender}"
+                        )
+        except Exception as doc_err:
+            logger.warning(f"[email_id={state['email_id']}] Doc carry-over failed (non-fatal): {doc_err}")
 
         await db_session.commit()
 

@@ -12,6 +12,7 @@ from src.data.models.postgres import (
     DisputeType, DisputeMaster, DisputeAssignment,
     DisputeAIAnalysis, AnalysisSupportingRef, DisputeRelationship,
 )
+from src.data.models.postgres.dispute_models import DisputeNewMessage
 
 
 class DisputeTypeRepository(BaseRepository[DisputeType]):
@@ -96,10 +97,22 @@ class DisputeRepository(BaseRepository[DisputeMaster]):
         return list((await self.db.execute(stmt)).scalars().all()), total
 
     async def get_by_customer(self, customer_id: str) -> List[DisputeMaster]:
-        stmt = select(DisputeMaster).where(and_(
-            DisputeMaster.customer_id == customer_id,
-            DisputeMaster.status.in_(["OPEN", "UNDER_REVIEW"]),
-        ))
+        stmt = (
+            select(DisputeMaster)
+            .where(and_(
+                DisputeMaster.customer_id == customer_id,
+                DisputeMaster.status.in_(["OPEN", "UNDER_REVIEW"]),
+            ))
+            # FA_MANUAL disputes first — they are explicitly waiting for customer response.
+            # Within same source, most recently updated first.
+            .order_by(
+                sa.case(
+                    (DisputeMaster.source == "FA_MANUAL", 0),
+                    else_=1
+                ),
+                DisputeMaster.updated_at.desc(),
+            )
+        )
         return list((await self.db.execute(stmt)).scalars().all())
 
     async def update_status(self, dispute_id: int, status: str) -> None:
@@ -223,3 +236,55 @@ class DisputeRelationshipRepository(BaseRepository[DisputeRelationship]):
             and_(DisputeRelationship.source_dispute_id == target_id, DisputeRelationship.target_dispute_id == source_id),
         ))
         return (await self.db.execute(stmt)).scalar_one_or_none() is not None
+
+
+class DisputeNewMessageRepository:
+    """
+    Manages the dispute_new_message table.
+    One row per dispute — upserted when a CUSTOMER episode arrives,
+    cleared when an FA marks the dispute as read.
+    """
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def set_new_message(self, dispute_id: int) -> None:
+        """Mark a dispute as having a new unread customer message."""
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        stmt = pg_insert(DisputeNewMessage).values(
+            dispute_id=dispute_id,
+            has_new_message=True,
+            arrived_at=now,
+            updated_at=now,
+        ).on_conflict_do_update(
+            index_elements=["dispute_id"],
+            set_={"has_new_message": True, "arrived_at": now, "updated_at": now},
+        )
+        await self.db.execute(stmt)
+
+    async def clear_new_message(self, dispute_id: int) -> None:
+        """FA has read the dispute — clear the flag."""
+        from datetime import datetime, timezone
+        stmt = (
+            update(DisputeNewMessage)
+            .where(DisputeNewMessage.dispute_id == dispute_id)
+            .values(has_new_message=False, updated_at=datetime.now(timezone.utc))
+        )
+        await self.db.execute(stmt)
+
+    async def get_all_unread(self) -> list[int]:
+        """Return dispute_ids that have unread customer messages."""
+        result = await self.db.execute(
+            select(DisputeNewMessage.dispute_id)
+            .where(DisputeNewMessage.has_new_message == True)
+        )
+        return [row.dispute_id for row in result.all()]
+
+    async def get_for_dispute(self, dispute_id: int) -> bool:
+        """Return True if this dispute has an unread customer message."""
+        row = (await self.db.execute(
+            select(DisputeNewMessage.has_new_message)
+            .where(DisputeNewMessage.dispute_id == dispute_id)
+        )).scalar_one_or_none()
+        return bool(row)

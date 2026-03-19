@@ -41,7 +41,7 @@ class AIAnalysisResponse(BaseModel):
 
 class DisputeResponse(BaseModel):
     dispute_id: int
-    email_id: int
+    email_id: Optional[int]
     invoice_id: Optional[int]
     payment_detail_id: Optional[int]
     customer_id: str
@@ -59,6 +59,7 @@ class DisputeDetailResponse(DisputeResponse):
     open_questions_count: int = 0
     assigned_to: Optional[str] = None
     has_new_customer_message: bool = False   # True when latest episode is from CUSTOMER
+    source: str = "EMAIL"                    # EMAIL | FA_MANUAL
 
 
 class DisputeListResponse(BaseModel):
@@ -149,3 +150,52 @@ class SupportingRefListResponse(BaseModel):
     dispute_id: int
     total: int
     items: List[SupportingRefResponse]
+
+
+class DraftEmailResponse(BaseModel):
+    dispute_id: int
+    draft_body: str
+    customer_id: str
+    suggested_subject: str
+
+
+# ── FA Manual Dispute Creation ────────────────────────────────────────────────
+
+class FADisputeCreate(BaseModel):
+    customer_id:      str              = Field(..., min_length=1, max_length=100)
+    dispute_type_id:  Optional[int]    = Field(None, description="Existing dispute type ID. If None, provide custom_type_name.")
+    custom_type_name: Optional[str]    = Field(None, min_length=2, max_length=100, description="New dispute type name if no existing type fits.")
+    custom_type_desc: Optional[str]    = Field(None, description="Description for the new custom dispute type.")
+    priority:         str              = Field("MEDIUM", pattern="^(LOW|MEDIUM|HIGH)$")
+    description:      str              = Field(..., min_length=5)
+    invoice_id:       Optional[int]    = None
+    notes:            Optional[str]    = None
+
+    @classmethod
+    def validate_type(cls, v: "FADisputeCreate") -> "FADisputeCreate":
+        if v.dispute_type_id is None and not v.custom_type_name:
+            raise ValueError("Either dispute_type_id or custom_type_name must be provided")
+        return v
+
+
+# ── Dispute Supporting Documents ──────────────────────────────────────────────
+
+class DisputeDocumentResponse(BaseModel):
+    document_id:  int
+    dispute_id:   int
+    uploaded_by:  int
+    uploader_name: Optional[str] = None
+    file_name:    str
+    file_type:    str
+    file_size:    Optional[int]
+    display_name: Optional[str]
+    notes:        Optional[str]
+    download_url: str             # signed GCS URL or local download path
+    created_at:   datetime
+    model_config  = {"from_attributes": True}
+
+
+class DisputeDocumentListResponse(BaseModel):
+    dispute_id: int
+    total:      int
+    items:      List[DisputeDocumentResponse]

@@ -12,4 +12,7 @@ from .dispute_schemas import (
     TimelineEpisodeResponse, DisputeTimelineResponse, TimelineAttachment,
     MemorySummaryResponse, QuestionStatusUpdate,
     SupportingRefResponse, SupportingRefCreate, SupportingRefListResponse,
+    DraftEmailResponse,
+    FADisputeCreate,
+    DisputeDocumentResponse, DisputeDocumentListResponse,
 )
