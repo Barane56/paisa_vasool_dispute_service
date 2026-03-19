@@ -64,7 +64,7 @@ async def _assign_type(
         invoice_number=invoice_number,
     )
     try:
-        response = await llm_client.chat(prompt)
+        response = await llm_client.chat_reasoning(prompt)
         data = json.loads(response)
         return {
             "dispute_type_name":    (data.get("dispute_type_name") or "General Clarification").strip(),
@@ -153,7 +153,7 @@ async def node_classify_email(
     )
 
     try:
-        structure_response = await llm_client.chat(structure_prompt)
+        structure_response = await llm_client.chat_reasoning(structure_prompt)
         structure_data: Dict = json.loads(structure_response)
     except Exception as e:
         logger.error(f"[email_id={state['email_id']}] Structure step failed: {e}", exc_info=True)

@@ -157,11 +157,15 @@ async def node_fetch_context(
                         break
 
             # Level 4: cold mail — no invoice in email
+            # Prefer FA_MANUAL disputes since they were created specifically to
+            # await a customer response. Fall back to most recently updated.
             if not matched_dispute and not matched_invoice_id:
-                matched_dispute = open_disputes[0]
+                fa_disputes = [d for d in open_disputes if getattr(d, "source", "EMAIL") == "FA_MANUAL"]
+                matched_dispute = fa_disputes[0] if fa_disputes else open_disputes[0]
                 logger.info(
                     f"[email_id={state['email_id']}] L4 match (cold mail): "
-                    f"most recent dispute for customer={customer_id} → dispute_id={matched_dispute.dispute_id}"
+                    f"{'FA_MANUAL' if fa_disputes else 'most-recent'} dispute for "
+                    f"customer={customer_id} → dispute_id={matched_dispute.dispute_id}"
                 )
 
     # ── Load memory ───────────────────────────────────────────────────────────

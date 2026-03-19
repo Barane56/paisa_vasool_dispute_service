@@ -48,7 +48,7 @@ send_router   = APIRouter(prefix="/disputes",   tags=["Send Email"])
 outbox_router = APIRouter(prefix="/outbound",   tags=["Outbound Emails"])
 
 STORAGE_DIR = Path(getattr(settings, "ATTACHMENT_STORAGE_DIR", "/tmp/dispute_attachments"))
-from src.core.services.gcs_service import get_public_url as _gcs_url
+from src.core.services.gcs_service import get_public_url as _gcs_url, GCSUnavailable
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -238,7 +238,24 @@ async def download_inbound_attachment(
 
     if settings.GCS_ENABLED:
         from fastapi.responses import RedirectResponse
-        return RedirectResponse(url=_gcs_url(att.file_path), status_code=302)
+        from src.core.services.gcs_service import GCSCredentialsUnavailable
+        try:
+            return RedirectResponse(url=_gcs_url(att.file_path), status_code=302)
+        except GCSCredentialsUnavailable:
+            # ADC not configured — fall through to byte streaming
+            logger.warning(f"GCS signed URL unavailable, streaming inbound attachment {attachment_id} directly")
+            try:
+                from src.core.services.gcs_service import async_download_attachment as _gcs_dl
+                from fastapi.responses import StreamingResponse
+                import io
+                data = await _gcs_dl(att.file_path)
+                return StreamingResponse(
+                    io.BytesIO(data),
+                    media_type=att.file_type or "application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{att.file_name}"'},
+                )
+            except Exception as dl_err:
+                raise HTTPException(status_code=500, detail=f"Cannot serve attachment: {dl_err}")
 
     full_path = STORAGE_DIR / att.file_path
     if not full_path.exists():
@@ -347,7 +364,23 @@ async def download_outbound_attachment(
 
     if settings.GCS_ENABLED:
         from fastapi.responses import RedirectResponse
-        return RedirectResponse(url=_gcs_url(att.file_path), status_code=302)
+        from src.core.services.gcs_service import GCSCredentialsUnavailable
+        try:
+            return RedirectResponse(url=_gcs_url(att.file_path), status_code=302)
+        except GCSCredentialsUnavailable:
+            logger.warning(f"GCS signed URL unavailable, streaming outbound attachment {attachment_id} directly")
+            try:
+                from src.core.services.gcs_service import async_download_attachment as _gcs_dl
+                from fastapi.responses import StreamingResponse
+                import io
+                data = await _gcs_dl(att.file_path)
+                return StreamingResponse(
+                    io.BytesIO(data),
+                    media_type=att.file_type or "application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{att.file_name}"'},
+                )
+            except Exception as dl_err:
+                raise HTTPException(status_code=500, detail=f"Cannot serve attachment: {dl_err}")
 
     full_path = STORAGE_DIR / att.file_path
     if not full_path.exists():

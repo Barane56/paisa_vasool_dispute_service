@@ -35,21 +35,22 @@ Requirements:
 """
 
 import asyncio
-import os
 import json
-from datetime import datetime, timezone
+import os
+from datetime import datetime
 from pathlib import Path
+
+from reportlab.lib import colors
 
 # ── PDF generation ────────────────────────────────────────────────────────────
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from sqlalchemy import text
 
 # ── DB ────────────────────────────────────────────────────────────────────────
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv(
@@ -68,53 +69,53 @@ styles = getSampleStyleSheet()
 
 DISPUTE_TYPES = [
     {
-        "reason_name":    "Pricing Mismatch",
-        "description":    "Customer claims the price charged differs from the agreed or quoted price.",
+        "reason_name": "Pricing Mismatch",
+        "description": "Customer claims the price charged differs from the agreed or quoted price.",
         "severity_level": "HIGH",
     },
     {
-        "reason_name":    "Short Payment",
-        "description":    "Customer has paid less than the invoiced amount without prior agreement.",
+        "reason_name": "Short Payment",
+        "description": "Customer has paid less than the invoiced amount without prior agreement.",
         "severity_level": "HIGH",
     },
     {
-        "reason_name":    "Duplicate Invoice",
-        "description":    "Customer believes they have been billed twice for the same goods or services.",
+        "reason_name": "Duplicate Invoice",
+        "description": "Customer believes they have been billed twice for the same goods or services.",
         "severity_level": "HIGH",
     },
     {
-        "reason_name":    "Tax Dispute",
-        "description":    "Customer disputes the tax rate, tax amount, or tax exemption applied on the invoice.",
+        "reason_name": "Tax Dispute",
+        "description": "Customer disputes the tax rate, tax amount, or tax exemption applied on the invoice.",
         "severity_level": "MEDIUM",
     },
     {
-        "reason_name":    "Payment Not Reflected",
-        "description":    "Customer claims payment was made but it has not been applied to the invoice on record.",
+        "reason_name": "Payment Not Reflected",
+        "description": "Customer claims payment was made but it has not been applied to the invoice on record.",
         "severity_level": "HIGH",
     },
     {
-        "reason_name":    "Goods Not Received",
-        "description":    "Customer disputes the invoice because the goods or services were not delivered.",
+        "reason_name": "Goods Not Received",
+        "description": "Customer disputes the invoice because the goods or services were not delivered.",
         "severity_level": "HIGH",
     },
     {
-        "reason_name":    "Quality Dispute",
-        "description":    "Customer received goods or services but disputes the quality or completeness of delivery.",
+        "reason_name": "Quality Dispute",
+        "description": "Customer received goods or services but disputes the quality or completeness of delivery.",
         "severity_level": "MEDIUM",
     },
     {
-        "reason_name":    "Early Payment Discount",
-        "description":    "Customer claims an early payment discount was applicable but was not reflected on the invoice.",
+        "reason_name": "Early Payment Discount",
+        "description": "Customer claims an early payment discount was applicable but was not reflected on the invoice.",
         "severity_level": "MEDIUM",
     },
     {
-        "reason_name":    "General Clarification",
-        "description":    "General inquiries and clarification requests that do not constitute a formal dispute.",
+        "reason_name": "General Clarification",
+        "description": "General inquiries and clarification requests that do not constitute a formal dispute.",
         "severity_level": "LOW",
     },
     {
-        "reason_name":    "Payment Terms Dispute",
-        "description":    "Customer disputes the payment due date, credit period, or agreed payment terms on the invoice.",
+        "reason_name": "Payment Terms Dispute",
+        "description": "Customer disputes the payment due date, credit period, or agreed payment terms on the invoice.",
         "severity_level": "MEDIUM",
     },
 ]
@@ -130,7 +131,6 @@ DISPUTE_TYPES = [
 
 INVOICES = [
     # ── baranekumar56@gmail.com ───────────────────────────────────────────────
-
     # INV-2025-001 — Laptop + accessories (pricing mismatch dispute)
     {
         "invoice_number": "INV-2025-001",
@@ -142,9 +142,24 @@ INVOICES = [
             "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
             "customer_name": "Baran Kumar",
             "line_items": [
-                {"description": "Laptop Dell Inspiron 15 3520", "qty": 1, "unit_price": 62000.00, "total": 62000.00},
-                {"description": "Wireless Mouse & Keyboard Combo", "qty": 1, "unit_price": 3500.00, "total": 3500.00},
-                {"description": "Laptop Bag Premium", "qty": 1, "unit_price": 2500.00, "total": 2500.00},
+                {
+                    "description": "Laptop Dell Inspiron 15 3520",
+                    "qty": 1,
+                    "unit_price": 62000.00,
+                    "total": 62000.00,
+                },
+                {
+                    "description": "Wireless Mouse & Keyboard Combo",
+                    "qty": 1,
+                    "unit_price": 3500.00,
+                    "total": 3500.00,
+                },
+                {
+                    "description": "Laptop Bag Premium",
+                    "qty": 1,
+                    "unit_price": 2500.00,
+                    "total": 2500.00,
+                },
             ],
             "subtotal": 68000.00,
             "tax_rate_pct": 18,
@@ -156,7 +171,6 @@ INVOICES = [
             "notes": "Quoted price for laptop was INR 58,000 per email dated 5-Jan-2025. Invoice shows INR 62,000.",
         },
     },
-
     # INV-2025-002 — Office stationery (duplicate invoice)
     {
         "invoice_number": "INV-2025-002",
@@ -168,9 +182,24 @@ INVOICES = [
             "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
             "customer_name": "Baran Kumar",
             "line_items": [
-                {"description": "A4 Paper Ream (500 sheets)", "qty": 20, "unit_price": 350.00, "total": 7000.00},
-                {"description": "Pen Box (Blue Ink, 10 pcs)", "qty": 5,  "unit_price": 120.00, "total": 600.00},
-                {"description": "Stapler Heavy Duty",          "qty": 2,  "unit_price": 450.00, "total": 900.00},
+                {
+                    "description": "A4 Paper Ream (500 sheets)",
+                    "qty": 20,
+                    "unit_price": 350.00,
+                    "total": 7000.00,
+                },
+                {
+                    "description": "Pen Box (Blue Ink, 10 pcs)",
+                    "qty": 5,
+                    "unit_price": 120.00,
+                    "total": 600.00,
+                },
+                {
+                    "description": "Stapler Heavy Duty",
+                    "qty": 2,
+                    "unit_price": 450.00,
+                    "total": 900.00,
+                },
             ],
             "subtotal": 8500.00,
             "tax_rate_pct": 12,
@@ -181,7 +210,6 @@ INVOICES = [
             "po_reference": "PO-BK-2025-002",
         },
     },
-
     # INV-2025-003 — Furniture (payment not reflected)
     {
         "invoice_number": "INV-2025-003",
@@ -193,9 +221,24 @@ INVOICES = [
             "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
             "customer_name": "Baran Kumar",
             "line_items": [
-                {"description": "Executive Office Desk (L-shaped)", "qty": 1, "unit_price": 18000.00, "total": 18000.00},
-                {"description": "Ergonomic Office Chair",            "qty": 1, "unit_price": 12000.00, "total": 12000.00},
-                {"description": "3-Door Steel Almirah",              "qty": 1, "unit_price": 9500.00,  "total": 9500.00},
+                {
+                    "description": "Executive Office Desk (L-shaped)",
+                    "qty": 1,
+                    "unit_price": 18000.00,
+                    "total": 18000.00,
+                },
+                {
+                    "description": "Ergonomic Office Chair",
+                    "qty": 1,
+                    "unit_price": 12000.00,
+                    "total": 12000.00,
+                },
+                {
+                    "description": "3-Door Steel Almirah",
+                    "qty": 1,
+                    "unit_price": 9500.00,
+                    "total": 9500.00,
+                },
             ],
             "subtotal": 39500.00,
             "tax_rate_pct": 18,
@@ -206,9 +249,7 @@ INVOICES = [
             "po_reference": "PO-BK-2025-003",
         },
     },
-
     # ── 717822p107@kce.ac.in ──────────────────────────────────────────────────
-
     # INV-2025-004 — Lab equipment for college (goods not received)
     {
         "invoice_number": "INV-2025-004",
@@ -220,10 +261,30 @@ INVOICES = [
             "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
             "customer_name": "KCE Engineering College",
             "line_items": [
-                {"description": "Arduino Uno Starter Kit",    "qty": 30, "unit_price": 1200.00, "total": 36000.00},
-                {"description": "Raspberry Pi 4 Model B 4GB", "qty": 10, "unit_price": 5500.00, "total": 55000.00},
-                {"description": "Digital Multimeter",          "qty": 20, "unit_price": 800.00,  "total": 16000.00},
-                {"description": "Breadboard + Jumper Wire Set","qty": 50, "unit_price": 150.00,  "total": 7500.00},
+                {
+                    "description": "Arduino Uno Starter Kit",
+                    "qty": 30,
+                    "unit_price": 1200.00,
+                    "total": 36000.00,
+                },
+                {
+                    "description": "Raspberry Pi 4 Model B 4GB",
+                    "qty": 10,
+                    "unit_price": 5500.00,
+                    "total": 55000.00,
+                },
+                {
+                    "description": "Digital Multimeter",
+                    "qty": 20,
+                    "unit_price": 800.00,
+                    "total": 16000.00,
+                },
+                {
+                    "description": "Breadboard + Jumper Wire Set",
+                    "qty": 50,
+                    "unit_price": 150.00,
+                    "total": 7500.00,
+                },
             ],
             "subtotal": 114500.00,
             "tax_rate_pct": 18,
@@ -235,7 +296,6 @@ INVOICES = [
             "delivery_note": "Partial delivery received — Raspberry Pi units not delivered as of invoice date.",
         },
     },
-
     # INV-2025-005 — Annual software subscription (tax dispute)
     {
         "invoice_number": "INV-2025-005",
@@ -247,8 +307,18 @@ INVOICES = [
             "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
             "customer_name": "KCE Engineering College",
             "line_items": [
-                {"description": "MATLAB Campus License Annual",     "qty": 1, "unit_price": 120000.00, "total": 120000.00},
-                {"description": "AutoCAD Education License (seats)","qty": 50, "unit_price": 800.00,   "total": 40000.00},
+                {
+                    "description": "MATLAB Campus License Annual",
+                    "qty": 1,
+                    "unit_price": 120000.00,
+                    "total": 120000.00,
+                },
+                {
+                    "description": "AutoCAD Education License (seats)",
+                    "qty": 50,
+                    "unit_price": 800.00,
+                    "total": 40000.00,
+                },
             ],
             "subtotal": 160000.00,
             "tax_amount_charged": 28800.00,
@@ -260,7 +330,6 @@ INVOICES = [
             "notes": "Educational institutions qualify for GST exemption on software licenses under Notification 12/2017. Tax should be 0%.",
         },
     },
-
     # INV-2025-006 — Canteen supplies (quality dispute + context shift — multi invoice)
     {
         "invoice_number": "INV-2025-006",
@@ -272,9 +341,24 @@ INVOICES = [
             "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
             "customer_name": "KCE Engineering College",
             "line_items": [
-                {"description": "Rice (25kg bag)", "qty": 40,  "unit_price": 1800.00, "total": 72000.00},
-                {"description": "Cooking Oil (15L can)", "qty": 20, "unit_price": 2200.00, "total": 44000.00},
-                {"description": "Disposable Plates (pack of 100)", "qty": 50, "unit_price": 250.00, "total": 12500.00},
+                {
+                    "description": "Rice (25kg bag)",
+                    "qty": 40,
+                    "unit_price": 1800.00,
+                    "total": 72000.00,
+                },
+                {
+                    "description": "Cooking Oil (15L can)",
+                    "qty": 20,
+                    "unit_price": 2200.00,
+                    "total": 44000.00,
+                },
+                {
+                    "description": "Disposable Plates (pack of 100)",
+                    "qty": 50,
+                    "unit_price": 250.00,
+                    "total": 12500.00,
+                },
             ],
             "subtotal": 128500.00,
             "tax_rate_pct": 5,
@@ -285,9 +369,7 @@ INVOICES = [
             "po_reference": "PO-KCE-2025-CAN-001",
         },
     },
-
     # ── jeevadharani9384@gmail.com ────────────────────────────────────────────
-
     # INV-2025-007 — Garments order (early payment discount not applied)
     {
         "invoice_number": "INV-2025-007",
@@ -299,9 +381,24 @@ INVOICES = [
             "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
             "customer_name": "Jeeva Dharani",
             "line_items": [
-                {"description": "Cotton Sarees (assorted, pcs)",   "qty": 50, "unit_price": 1200.00, "total": 60000.00},
-                {"description": "Dress Material Sets",             "qty": 30, "unit_price": 800.00,  "total": 24000.00},
-                {"description": "Embroidered Blouse Pieces",       "qty": 40, "unit_price": 450.00,  "total": 18000.00},
+                {
+                    "description": "Cotton Sarees (assorted, pcs)",
+                    "qty": 50,
+                    "unit_price": 1200.00,
+                    "total": 60000.00,
+                },
+                {
+                    "description": "Dress Material Sets",
+                    "qty": 30,
+                    "unit_price": 800.00,
+                    "total": 24000.00,
+                },
+                {
+                    "description": "Embroidered Blouse Pieces",
+                    "qty": 40,
+                    "unit_price": 450.00,
+                    "total": 18000.00,
+                },
             ],
             "subtotal": 102000.00,
             "tax_rate_pct": 5,
@@ -313,7 +410,6 @@ INVOICES = [
             "discount_note": "2% early payment discount = INR 2,142 applicable if paid by 15-Jan-2025.",
         },
     },
-
     # INV-2025-008 — Electronics (damaged goods on delivery — quality dispute)
     {
         "invoice_number": "INV-2025-008",
@@ -325,9 +421,24 @@ INVOICES = [
             "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
             "customer_name": "Jeeva Dharani",
             "line_items": [
-                {"description": "Mixer Grinder 750W",     "qty": 5, "unit_price": 3200.00, "total": 16000.00},
-                {"description": "Electric Kettle 1.5L",   "qty": 8, "unit_price": 1100.00, "total": 8800.00},
-                {"description": "Induction Cooktop 2000W","qty": 3, "unit_price": 2800.00, "total": 8400.00},
+                {
+                    "description": "Mixer Grinder 750W",
+                    "qty": 5,
+                    "unit_price": 3200.00,
+                    "total": 16000.00,
+                },
+                {
+                    "description": "Electric Kettle 1.5L",
+                    "qty": 8,
+                    "unit_price": 1100.00,
+                    "total": 8800.00,
+                },
+                {
+                    "description": "Induction Cooktop 2000W",
+                    "qty": 3,
+                    "unit_price": 2800.00,
+                    "total": 8400.00,
+                },
             ],
             "subtotal": 33200.00,
             "tax_rate_pct": 18,
@@ -339,7 +450,6 @@ INVOICES = [
             "notes": "2 mixer grinders arrived with cracked lids. 1 induction cooktop with shattered glass top.",
         },
     },
-
     # INV-2025-009 — Tailoring services (payment terms dispute)
     {
         "invoice_number": "INV-2025-009",
@@ -351,8 +461,18 @@ INVOICES = [
             "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
             "customer_name": "Jeeva Dharani",
             "line_items": [
-                {"description": "Custom Embroidery Work (pieces)",  "qty": 100, "unit_price": 350.00, "total": 35000.00},
-                {"description": "Stitching Services — Blouses",     "qty": 50,  "unit_price": 200.00, "total": 10000.00},
+                {
+                    "description": "Custom Embroidery Work (pieces)",
+                    "qty": 100,
+                    "unit_price": 350.00,
+                    "total": 35000.00,
+                },
+                {
+                    "description": "Stitching Services — Blouses",
+                    "qty": 50,
+                    "unit_price": 200.00,
+                    "total": 10000.00,
+                },
             ],
             "subtotal": 45000.00,
             "tax_rate_pct": 5,
@@ -365,9 +485,7 @@ INVOICES = [
             "notes": "Agreement email dated 10-Feb-2025 clearly states Net 30. Invoice shows Net 7 — due date wrong.",
         },
     },
-
     # ── prakeshprakesh9345@gmail.com ──────────────────────────────────────────
-
     # INV-2025-010 — Printing services (short payment scenario)
     {
         "invoice_number": "INV-2025-010",
@@ -379,10 +497,30 @@ INVOICES = [
             "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
             "customer_name": "Prakesh P",
             "line_items": [
-                {"description": "Flex Banner Printing (sqft)",   "qty": 200, "unit_price": 45.00,   "total": 9000.00},
-                {"description": "Brochure Printing A4 (colour)", "qty": 1000,"unit_price": 8.00,    "total": 8000.00},
-                {"description": "Visiting Cards (box of 100)",   "qty": 10,  "unit_price": 350.00,  "total": 3500.00},
-                {"description": "Lamination — Matte (sheets)",   "qty": 500, "unit_price": 4.00,    "total": 2000.00},
+                {
+                    "description": "Flex Banner Printing (sqft)",
+                    "qty": 200,
+                    "unit_price": 45.00,
+                    "total": 9000.00,
+                },
+                {
+                    "description": "Brochure Printing A4 (colour)",
+                    "qty": 1000,
+                    "unit_price": 8.00,
+                    "total": 8000.00,
+                },
+                {
+                    "description": "Visiting Cards (box of 100)",
+                    "qty": 10,
+                    "unit_price": 350.00,
+                    "total": 3500.00,
+                },
+                {
+                    "description": "Lamination — Matte (sheets)",
+                    "qty": 500,
+                    "unit_price": 4.00,
+                    "total": 2000.00,
+                },
             ],
             "subtotal": 22500.00,
             "tax_rate_pct": 12,
@@ -393,7 +531,6 @@ INVOICES = [
             "po_reference": "PO-PP-2025-001",
         },
     },
-
     # INV-2025-011 — Event management (multi-issue: pricing + goods not received)
     {
         "invoice_number": "INV-2025-011",
@@ -405,11 +542,36 @@ INVOICES = [
             "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
             "customer_name": "Prakesh P",
             "line_items": [
-                {"description": "Stage Setup & Decoration",         "qty": 1, "unit_price": 35000.00, "total": 35000.00},
-                {"description": "PA System Rental (2 days)",        "qty": 2, "unit_price": 8000.00,  "total": 16000.00},
-                {"description": "Photography (event, 8hrs)",        "qty": 1, "unit_price": 12000.00, "total": 12000.00},
-                {"description": "Catering — Veg Buffet (per head)", "qty": 200,"unit_price": 450.00,  "total": 90000.00},
-                {"description": "LED Screen 12x8ft (day)",          "qty": 1, "unit_price": 15000.00, "total": 15000.00},
+                {
+                    "description": "Stage Setup & Decoration",
+                    "qty": 1,
+                    "unit_price": 35000.00,
+                    "total": 35000.00,
+                },
+                {
+                    "description": "PA System Rental (2 days)",
+                    "qty": 2,
+                    "unit_price": 8000.00,
+                    "total": 16000.00,
+                },
+                {
+                    "description": "Photography (event, 8hrs)",
+                    "qty": 1,
+                    "unit_price": 12000.00,
+                    "total": 12000.00,
+                },
+                {
+                    "description": "Catering — Veg Buffet (per head)",
+                    "qty": 200,
+                    "unit_price": 450.00,
+                    "total": 90000.00,
+                },
+                {
+                    "description": "LED Screen 12x8ft (day)",
+                    "qty": 1,
+                    "unit_price": 15000.00,
+                    "total": 15000.00,
+                },
             ],
             "subtotal": 168000.00,
             "tax_rate_pct": 18,
@@ -421,7 +583,6 @@ INVOICES = [
             "notes": "LED Screen was not delivered. Catering count was 150 pax not 200. Two disputes in same email.",
         },
     },
-
     # INV-2025-012 — Courier services (payment terms dispute + context shift email)
     {
         "invoice_number": "INV-2025-012",
@@ -433,9 +594,24 @@ INVOICES = [
             "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
             "customer_name": "Prakesh P",
             "line_items": [
-                {"description": "Express Courier — Domestic (shipments)", "qty": 50, "unit_price": 180.00, "total": 9000.00},
-                {"description": "Bulk Parcel — 5kg slab (shipments)",     "qty": 30, "unit_price": 320.00, "total": 9600.00},
-                {"description": "COD Handling Charges",                   "qty": 20, "unit_price": 50.00,  "total": 1000.00},
+                {
+                    "description": "Express Courier — Domestic (shipments)",
+                    "qty": 50,
+                    "unit_price": 180.00,
+                    "total": 9000.00,
+                },
+                {
+                    "description": "Bulk Parcel — 5kg slab (shipments)",
+                    "qty": 30,
+                    "unit_price": 320.00,
+                    "total": 9600.00,
+                },
+                {
+                    "description": "COD Handling Charges",
+                    "qty": 20,
+                    "unit_price": 50.00,
+                    "total": 1000.00,
+                },
             ],
             "subtotal": 19600.00,
             "tax_rate_pct": 18,
@@ -447,7 +623,6 @@ INVOICES = [
             "po_reference": "PO-PP-2025-003",
         },
     },
-
     # ── UNVERIFIED ownership test case ────────────────────────────────────────
     # INV-2025-013 — belongs to 717822p107@kce.ac.in
     # Email sent by prakeshprakesh9345@gmail.com — should trigger UNVERIFIED
@@ -461,9 +636,24 @@ INVOICES = [
             "vendor_name": "Paisa Vasool Supplies Pvt Ltd",
             "customer_name": "KCE Engineering College",
             "line_items": [
-                {"description": "Projector Epson EB-X41",    "qty": 5,  "unit_price": 28000.00, "total": 140000.00},
-                {"description": "Projection Screen 120-inch","qty": 5,  "unit_price": 4500.00,  "total": 22500.00},
-                {"description": "HDMI Cables (2m)",          "qty": 20, "unit_price": 350.00,   "total": 7000.00},
+                {
+                    "description": "Projector Epson EB-X41",
+                    "qty": 5,
+                    "unit_price": 28000.00,
+                    "total": 140000.00,
+                },
+                {
+                    "description": "Projection Screen 120-inch",
+                    "qty": 5,
+                    "unit_price": 4500.00,
+                    "total": 22500.00,
+                },
+                {
+                    "description": "HDMI Cables (2m)",
+                    "qty": 20,
+                    "unit_price": 350.00,
+                    "total": 7000.00,
+                },
             ],
             "subtotal": 169500.00,
             "tax_rate_pct": 18,
@@ -483,7 +673,6 @@ INVOICES = [
 
 PAYMENTS = [
     # ── baranekumar56@gmail.com ───────────────────────────────────────────────
-
     # INV-2025-001 — partial paid (pricing dispute, balance withheld)
     {
         "customer_id": "baranekumar56@gmail.com",
@@ -521,7 +710,6 @@ PAYMENTS = [
             "note": "Balance held pending pricing dispute resolution.",
         },
     },
-
     # INV-2025-002 — full payment made (duplicate invoice dispute)
     {
         "customer_id": "baranekumar56@gmail.com",
@@ -541,7 +729,6 @@ PAYMENTS = [
             "note": "Paid in full. Duplicate invoice INV-2025-002-DUP received — requesting cancellation.",
         },
     },
-
     # INV-2025-003 — payment made but not reflected
     {
         "customer_id": "baranekumar56@gmail.com",
@@ -561,9 +748,7 @@ PAYMENTS = [
             "note": "Payment made on 20-Feb-2025. Bank confirms debit. Invoice still shows UNPAID.",
         },
     },
-
     # ── 717822p107@kce.ac.in ──────────────────────────────────────────────────
-
     # INV-2025-004 — advance paid, balance held (goods not fully received)
     {
         "customer_id": "717822p107@kce.ac.in",
@@ -601,7 +786,6 @@ PAYMENTS = [
             "note": "Balance held until Raspberry Pi units are delivered.",
         },
     },
-
     # INV-2025-005 — full payment made, GST tax dispute
     {
         "customer_id": "717822p107@kce.ac.in",
@@ -621,7 +805,6 @@ PAYMENTS = [
             "note": "Paid in full as goodwill. Requesting credit note INR 28,800 — GST exemption for education.",
         },
     },
-
     # INV-2025-006 — advance paid (quality dispute on canteen items)
     {
         "customer_id": "717822p107@kce.ac.in",
@@ -641,7 +824,6 @@ PAYMENTS = [
             "note": "50% advance. Balance withheld — rice quality substandard, 15 bags rejected.",
         },
     },
-
     # INV-2025-013 — ownership check: customer_id is kce, NOT prakesh (UNVERIFIED test)
     {
         "customer_id": "717822p107@kce.ac.in",
@@ -661,9 +843,7 @@ PAYMENTS = [
             "note": "Awaiting payment.",
         },
     },
-
     # ── jeevadharani9384@gmail.com ────────────────────────────────────────────
-
     # INV-2025-007 — paid early but discount not applied
     {
         "customer_id": "jeevadharani9384@gmail.com",
@@ -683,7 +863,6 @@ PAYMENTS = [
             "note": "Paid on 13-Jan-2025 (within 10-day window). 2% discount INR 2,142 not applied. Requesting credit note.",
         },
     },
-
     # INV-2025-008 — partial paid (damaged goods withheld)
     {
         "customer_id": "jeevadharani9384@gmail.com",
@@ -721,7 +900,6 @@ PAYMENTS = [
             "note": "Balance pending replacement or credit note for damaged items.",
         },
     },
-
     # INV-2025-009 — payment withheld (payment terms dispute)
     {
         "customer_id": "jeevadharani9384@gmail.com",
@@ -741,9 +919,7 @@ PAYMENTS = [
             "note": "Payment withheld. Due date on invoice is wrong — agreed terms were Net 30, not Net 7.",
         },
     },
-
     # ── prakeshprakesh9345@gmail.com ──────────────────────────────────────────
-
     # INV-2025-010 — partial paid (short payment)
     {
         "customer_id": "prakeshprakesh9345@gmail.com",
@@ -781,7 +957,6 @@ PAYMENTS = [
             "note": "Balance held pending pricing dispute on flex banner rate.",
         },
     },
-
     # INV-2025-011 — advance paid (multi-issue: pricing + goods not received)
     {
         "customer_id": "prakeshprakesh9345@gmail.com",
@@ -819,7 +994,6 @@ PAYMENTS = [
             "note": "Balance withheld. LED screen credit + catering count correction needed.",
         },
     },
-
     # INV-2025-012 — payment withheld (payment terms dispute)
     {
         "customer_id": "prakeshprakesh9345@gmail.com",
@@ -846,9 +1020,7 @@ PAYMENTS = [
 # =============================================================================
 
 EMAILS = [
-
     # ── baranekumar56@gmail.com ───────────────────────────────────────────────
-
     # 1. Pricing mismatch (INV-2025-001)
     {
         "filename": "email_01_pricing_mismatch_baran.pdf",
@@ -875,7 +1047,6 @@ Regards,
 Baran Kumar
 baranekumar56@gmail.com""",
     },
-
     # 2. Duplicate invoice (INV-2025-002)
     {
         "filename": "email_02_duplicate_invoice_baran.pdf",
@@ -898,7 +1069,6 @@ Thank you,
 Baran Kumar
 baranekumar56@gmail.com""",
     },
-
     # 3. Payment not reflected (INV-2025-003)
     {
         "filename": "email_03_payment_not_reflected_baran.pdf",
@@ -923,7 +1093,6 @@ Could you please:
 Regards,
 Baran Kumar""",
     },
-
     # 4. No invoice — general clarification (triggers clarification flow)
     {
         "filename": "email_04_clarification_no_invoice_baran.pdf",
@@ -940,9 +1109,7 @@ My registered email is baranekumar56@gmail.com.
 Thanks,
 Baran""",
     },
-
     # ── 717822p107@kce.ac.in ──────────────────────────────────────────────────
-
     # 5. Goods not received — partial delivery (INV-2025-004)
     {
         "filename": "email_05_goods_not_received_kce.pdf",
@@ -972,7 +1139,6 @@ Student Projects Coordinator
 KCE Engineering College
 717822p107@kce.ac.in""",
     },
-
     # 6. Tax dispute — GST exemption not applied (INV-2025-005)
     {
         "filename": "email_06_tax_dispute_kce.pdf",
@@ -1001,7 +1167,6 @@ Regards,
 Finance Office
 KCE Engineering College""",
     },
-
     # 7. Quality dispute + context shift (INV-2025-006 + also mentions INV-2025-004)
     {
         "filename": "email_07_quality_context_shift_kce.pdf",
@@ -1031,9 +1196,7 @@ Please address both matters separately.
 Regards,
 KCE Engineering College""",
     },
-
     # ── jeevadharani9384@gmail.com ────────────────────────────────────────────
-
     # 8. Early payment discount not applied (INV-2025-007)
     {
         "filename": "email_08_early_payment_discount_jeeva.pdf",
@@ -1056,7 +1219,6 @@ Thank you,
 Jeeva Dharani
 jeevadharani9384@gmail.com""",
     },
-
     # 9. Damaged goods on delivery (INV-2025-008)
     {
         "filename": "email_09_damaged_goods_jeeva.pdf",
@@ -1087,7 +1249,6 @@ Please arrange pickup of the damaged goods.
 Regards,
 Jeeva Dharani""",
     },
-
     # 10. Payment terms dispute (INV-2025-009)
     {
         "filename": "email_10_payment_terms_jeeva.pdf",
@@ -1113,9 +1274,7 @@ Regards,
 Jeeva Dharani
 jeevadharani9384@gmail.com""",
     },
-
     # ── prakeshprakesh9345@gmail.com ──────────────────────────────────────────
-
     # 11. Short payment / pricing mismatch (INV-2025-010)
     {
         "filename": "email_11_pricing_short_payment_prakesh.pdf",
@@ -1140,7 +1299,6 @@ Thanks,
 Prakesh
 prakeshprakesh9345@gmail.com""",
     },
-
     # 12. Multi-issue single email (INV-2025-011) — triggers inline disputes
     {
         "filename": "email_12_multi_issue_prakesh.pdf",
@@ -1170,7 +1328,6 @@ Regards,
 Prakesh
 prakeshprakesh9345@gmail.com""",
     },
-
     # 13. Context shift email — starts with one issue, then raises another (INV-2025-012)
     {
         "filename": "email_13_context_shift_prakesh.pdf",
@@ -1200,7 +1357,6 @@ Please treat both as separate disputes.
 
 Prakesh""",
     },
-
     # 14. Unverified ownership — prakesh trying to query KCE invoice (INV-2025-013)
     {
         "filename": "email_14_unverified_ownership_prakesh.pdf",
@@ -1216,7 +1372,6 @@ My email is prakeshprakesh9345@gmail.com.
 Regards,
 Prakesh""",
     },
-
     # 15. Follow-up clarification — no invoice details provided (clarification flow)
     {
         "filename": "email_15_no_invoice_clarification_jeeva.pdf",
@@ -1233,7 +1388,6 @@ for me? My email is jeevadharani9384@gmail.com.
 Thanks,
 Jeeva""",
     },
-
     # 16. Payment not reflected follow-up (INV-2025-003 second email — threading test)
     {
         "filename": "email_16_followup_threading_baran.pdf",
@@ -1262,6 +1416,7 @@ baranekumar56@gmail.com""",
 # PDF Generator
 # =============================================================================
 
+
 def generate_email_pdf(email_data: dict, output_path: Path):
     doc = SimpleDocTemplate(
         str(output_path),
@@ -1275,29 +1430,35 @@ def generate_email_pdf(email_data: dict, output_path: Path):
     story = []
 
     header_data = [
-        ["FROM:",    email_data["sender"]],
-        ["TO:",      "disputes@paisavasool.com"],
+        ["FROM:", email_data["sender"]],
+        ["TO:", "disputes@paisavasool.com"],
         ["SUBJECT:", email_data["subject"]],
-        ["DATE:",    datetime.now().strftime("%d %B %Y, %H:%M IST")],
+        ["DATE:", datetime.now().strftime("%d %B %Y, %H:%M IST")],
     ]
-    header_table = Table(header_data, colWidths=[1.2*inch, 5*inch])
-    header_table.setStyle(TableStyle([
-        ("BACKGROUND",  (0, 0), (0, -1), colors.HexColor("#f0f0f0")),
-        ("TEXTCOLOR",   (0, 0), (0, -1), colors.HexColor("#333333")),
-        ("FONTNAME",    (0, 0), (0, -1), "Helvetica-Bold"),
-        ("FONTNAME",    (1, 0), (1, -1), "Helvetica"),
-        ("FONTSIZE",    (0, 0), (-1, -1), 10),
-        ("PADDING",     (0, 0), (-1, -1), 6),
-        ("GRID",        (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
-        ("VALIGN",      (0, 0), (-1, -1), "TOP"),
-    ]))
+    header_table = Table(header_data, colWidths=[1.2 * inch, 5 * inch])
+    header_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f0f0f0")),
+                ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#333333")),
+                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+                ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
+                ("PADDING", (0, 0), (-1, -1), 6),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cccccc")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
     story.append(header_table)
-    story.append(Spacer(1, 0.3*inch))
+    story.append(Spacer(1, 0.3 * inch))
 
-    divider = Table([[""]], colWidths=[6.5*inch])
-    divider.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 1, colors.HexColor("#333333"))]))
+    divider = Table([[""]], colWidths=[6.5 * inch])
+    divider.setStyle(
+        TableStyle([("LINEBELOW", (0, 0), (-1, -1), 1, colors.HexColor("#333333"))])
+    )
     story.append(divider)
-    story.append(Spacer(1, 0.2*inch))
+    story.append(Spacer(1, 0.2 * inch))
 
     body_style = ParagraphStyle(
         "body",
@@ -1310,7 +1471,7 @@ def generate_email_pdf(email_data: dict, output_path: Path):
         if line.strip():
             story.append(Paragraph(line.strip(), body_style))
         else:
-            story.append(Spacer(1, 0.1*inch))
+            story.append(Spacer(1, 0.1 * inch))
 
     doc.build(story)
     print(f"  created: {output_path.name}")
@@ -1320,15 +1481,20 @@ def generate_email_pdf(email_data: dict, output_path: Path):
 # DB Seeder
 # =============================================================================
 
+
 async def seed_database():
     engine = create_async_engine(DATABASE_URL, echo=False)
-    AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    AsyncSessionLocal = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
 
     async with AsyncSessionLocal() as session:
         print("\nSeeding dispute types...")
         for dt in DISPUTE_TYPES:
             result = await session.execute(
-                text("SELECT dispute_type_id FROM dispute_type WHERE reason_name = :name"),
+                text(
+                    "SELECT dispute_type_id FROM dispute_type WHERE reason_name = :name"
+                ),
                 {"name": dt["reason_name"]},
             )
             if result.fetchone():
@@ -1340,12 +1506,14 @@ async def seed_database():
                     VALUES (:reason_name, :description, :severity_level, true)
                 """),
                 {
-                    "reason_name":    dt["reason_name"],
-                    "description":    dt["description"],
+                    "reason_name": dt["reason_name"],
+                    "description": dt["description"],
                     "severity_level": dt["severity_level"],
                 },
             )
-            print(f"  DisputeType '{dt['reason_name']}' [{dt['severity_level']}] inserted")
+            print(
+                f"  DisputeType '{dt['reason_name']}' [{dt['severity_level']}] inserted"
+            )
         await session.commit()
         print(f"  {len(DISPUTE_TYPES)} dispute types seeded")
 
@@ -1364,8 +1532,8 @@ async def seed_database():
                     VALUES (:invoice_number, :invoice_url, cast(:invoice_details as jsonb), NOW())
                 """),
                 {
-                    "invoice_number":  inv["invoice_number"],
-                    "invoice_url":     inv["invoice_url"],
+                    "invoice_number": inv["invoice_number"],
+                    "invoice_url": inv["invoice_url"],
                     "invoice_details": json.dumps(inv["invoice_details"]),
                 },
             )
@@ -1374,11 +1542,15 @@ async def seed_database():
         print("\nSeeding payment details...")
         for pay in PAYMENTS:
             result = await session.execute(
-                text("SELECT payment_detail_id FROM payment_detail WHERE payment_url = :url"),
+                text(
+                    "SELECT payment_detail_id FROM payment_detail WHERE payment_url = :url"
+                ),
                 {"url": pay["payment_url"]},
             )
             if result.fetchone():
-                ref = pay["payment_details"].get("payment_reference", pay["payment_url"])
+                ref = pay["payment_details"].get(
+                    "payment_reference", pay["payment_url"]
+                )
                 print(f"  Payment {ref} already exists, skipping.")
                 continue
             await session.execute(
@@ -1387,15 +1559,17 @@ async def seed_database():
                     VALUES (:customer_id, :invoice_number, :payment_url, cast(:payment_details as jsonb))
                 """),
                 {
-                    "customer_id":     pay["customer_id"],
-                    "invoice_number":  pay["invoice_number"],
-                    "payment_url":     pay["payment_url"],
+                    "customer_id": pay["customer_id"],
+                    "invoice_number": pay["invoice_number"],
+                    "payment_url": pay["payment_url"],
                     "payment_details": json.dumps(pay["payment_details"]),
                 },
             )
-            ref   = pay["payment_details"].get("payment_reference", "N/A")
+            ref = pay["payment_details"].get("payment_reference", "N/A")
             ptype = pay["payment_details"].get("payment_type", "?")
-            print(f"  Payment {ref} [{ptype}] for {pay['invoice_number']} → {pay['customer_id']}")
+            print(
+                f"  Payment {ref} [{ptype}] for {pay['invoice_number']} → {pay['customer_id']}"
+            )
 
         await session.commit()
 
@@ -1406,6 +1580,7 @@ async def seed_database():
 # =============================================================================
 # Main
 # =============================================================================
+
 
 async def main():
     print("=" * 62)

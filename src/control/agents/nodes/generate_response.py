@@ -42,14 +42,32 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _sanitise_dispute_token(ai_response: str, expected_token: str) -> str:
-    """Replace any LLM-hallucinated DISP-XXXXX IDs with the correct placeholder."""
+    """
+    Replace any LLM-hallucinated dispute reference IDs with the correct placeholder.
+
+    Catches all known hallucination patterns:
+      DISP-00001        (our real format)
+      DISPUTE-2025-001  (LLM makes up year-based references)
+      DISPUTE-001       (LLM shortens it)
+      REF-2025-001      (LLM uses REF prefix)
+      DISP-2025-001     (LLM mixes formats)
+    """
     if expected_token != "{DISPUTE_TOKEN}":
         return ai_response
-    sanitised = re.sub(r'\bDISP[-_]?\d{1,6}\b', "{DISPUTE_TOKEN}",
-                       ai_response, flags=re.IGNORECASE)
+
+    # Broad pattern: any word starting with DISP or DISPUTE or REF followed by
+    # digits and hyphens — covers all known hallucination styles
+    sanitised = re.sub(
+        r'\b(?:DISPUTE|DISP|REF)[-_](?:\d{4}[-_])?\d{1,6}\b',
+        "{DISPUTE_TOKEN}",
+        ai_response,
+        flags=re.IGNORECASE,
+    )
     if sanitised != ai_response:
-        logger.warning(f"LLM hallucinated dispute ID — restored placeholder. "
-                       f"Snippet: {ai_response[:120]!r}")
+        logger.warning(
+            f"LLM hallucinated dispute ID — restored placeholder. "
+            f"Snippet: {ai_response[:120]!r}"
+        )
     return sanitised
 
 
@@ -364,7 +382,7 @@ async def node_generate_ai_response(
             fallback_payment_details=state.get("all_payment_details") or [],
         )
 
-        print(inv_ctx, pay_ctx)
+        # print(inv_ctx, pay_ctx)
 
         result = await _call_llm_for_issue(
             llm_client=llm_client,
