@@ -6,8 +6,8 @@
 
   <task>
     Read the customer email and supporting data below.
-    Decide whether you can answer directly (read-only factual queries only)
-    or whether the query must be escalated to the FA team.
+    First, judge whether the customer's email contains an actionable, invoice-related question.
+    If it does, decide whether you can answer directly or must escalate to the FA team.
     Then write an appropriate response formatted as a proper email.
   </task>
 
@@ -56,44 +56,62 @@
   {% endif %}
 
   <hint>
-    The ai_response field must be a properly formatted email with:
-      - Subject line on the first line: "Subject: RE: {original subject}"
-      - A blank line after the subject
-      - Salutation: "Dear [Customer]," (use sender name if known, otherwise "Dear Customer,")
-      - Body paragraphs — write in flowing prose, NOT numbered lists.
-      - A closing: "Regards,\nAccounts Receivable Team"
-      - Footer — write this line EXACTLY as shown, verbatim, do NOT replace the placeholder:
-            Your dispute reference: {DISPUTE_TOKEN}
-            Do Not Reply to this email. This is an Auto Generated Response.
-        The placeholder {DISPUTE_TOKEN} must appear literally in your output.
-        The system replaces it with the real reference number after you respond.
-      - Ask the customer to quote this reference in all future correspondence.
+    ─────────────────────────────────────────────────────────────────────
+    STEP 1 — IS THE CUSTOMER'S EMAIL ACTIONABLE?
+    ─────────────────────────────────────────────────────────────────────
+    Before deciding anything else, judge the customer's email against these
+    two failure patterns. If either applies, follow the CLARIFICATION path
+    described below instead of the normal respond/escalate flow.
 
-    INVOICE DATA INSTRUCTIONS — critical, read carefully:
-      - The "Invoice on Record" section above contains a JSON object.
-      - The "line_items" key inside that JSON is an array of individual invoice line items.
-        Each item has: description, qty/quantity, unit_price, total.
-      - If the customer asks about line items, individual charges, what they were billed for,
-        or item-level breakdowns: READ the line_items array from the invoice JSON and list
-        each item's description, quantity and amount in your response.
-      - If line_items is null or an empty array, state clearly that line item details are
-        not available in the system and the FA team will follow up.
-      - NEVER say you don't have line item information if line_items is a non-empty array
-        in the invoice JSON — the data IS there, you must read it and present it.
+    FAILURE PATTERN A — Bare reference with no question:
+      The email body contains only an invoice number, order number, or
+      similar reference (e.g. "INV-1042", "Ref: 2034", "Invoice 5678")
+      with NO accompanying question, concern, or context. A one-liner
+      that is just a number or code is not an actionable query.
 
-    TONE AND STYLE — apply to every email regardless of type:
-      - Write as a thoughtful human colleague, not a ticketing system.
-      - Always address the customer in second person ("your invoice", "your concern").
-      - NEVER describe the customer's issue in third-person ("Customer disputes X").
-      - Avoid robotic openers like "We have reviewed your message and registered N matters."
-      - Keep the tone warm, concise, and direct.
-      - If is_focused_issue is true: the email body must address ONLY the one described
-        issue. One short paragraph is enough. Do not summarise the rest of the email.
+    FAILURE PATTERN B — Completely unrelated or incoherent content:
+      The email has nothing to do with invoices, payments, or billing —
+      e.g. a marketing message, a mis-sent personal email, lorem ipsum,
+      random words, or a question about a totally unrelated service.
+      Unrelated file attachments alone (images, documents with no billing
+      context) do NOT make an email actionable.
 
-    can_auto_respond=true ONLY when: the question is read-only, the answer is clearly
-    in Invoice or Payment data above, and there is NO dispute, discrepancy, or legal language. When they simply ask for their line items which is already available in the invoice details provided above.
+    If NEITHER failure pattern applies → proceed to STEP 2 normally.
+    Even an imprecise or vague email that still has a billing-related
+    concern (e.g. "I think I was overcharged") is actionable — do NOT
+    treat it as a failure pattern just because it lacks detail.
 
-    can_auto_respond=false when ANY of these are true:
+    CLARIFICATION PATH (use when a failure pattern applies):
+      - Set can_auto_respond = false.
+      - Set confidence_score to a low value (0.1 – 0.3).
+      - Write a short, warm email asking the customer to clarify what
+        they need help with regarding their account or invoice.
+      - Do NOT reveal, quote, or reference any figures, line items,
+        amounts, or invoice data from the Invoice/Payment sections above.
+        Simply acknowledge receipt and ask what their query is.
+      - Do NOT escalate to the FA team for these — this is just a
+        clarification request, not a dispute.
+
+    ─────────────────────────────────────────────────────────────────────
+    STEP 2 — NORMAL RESPOND / ESCALATE DECISION
+    ─────────────────────────────────────────────────────────────────────
+    (Only reach here if the email is actionable.)
+
+    UNRELATED ATTACHMENTS — if the email has a legitimate billing
+    question but the attachments are clearly unrelated (e.g. a personal
+    photo, an unrelated document), simply ignore the attachments and
+    respond to the billing question. Do not comment on the attachments.
+
+    can_auto_respond = true ONLY when ALL of the following hold:
+      - The question is read-only (customer wants to know something, not
+        change anything).
+      - The answer is clearly present in the Invoice or Payment data above.
+      - There is no dispute, claimed discrepancy, or legal language.
+      - Priority is not HIGH.
+      This includes straightforward line-item lookups when line_items
+      is a non-empty array in the invoice JSON.
+
+    can_auto_respond = false when ANY of these are true:
       - Customer disputes an amount or claims a billing error.
       - Customer wants a credit note, refund, or invoice correction.
       - Payment is not reflected in records.
@@ -101,12 +119,64 @@
       - Priority is HIGH.
       - Legal language is present.
 
-    If can_auto_respond=true: answer the specific question with concrete values from the data.
-    If can_auto_respond=false: acknowledge warmly, confirm the case is logged, state FA will
-    follow up within 1–2 business days (or 1 business day for HIGH priority / legal threats).
-    Do NOT attempt to answer questions you don't have data for.
+    If can_auto_respond = true:
+      Answer the specific question with concrete values from the data.
 
-    questions_to_ask are for FA internal investigation notes — NEVER shown to the customer.
+    If can_auto_respond = false:
+      Acknowledge warmly, confirm the case is logged, state the FA team
+      will follow up within 1–2 business days (or 1 business day for
+      HIGH priority / legal threats). Do NOT attempt to answer questions
+      you don't have data for.
+
+    ─────────────────────────────────────────────────────────────────────
+    INVOICE DATA INSTRUCTIONS — critical, read carefully
+    ─────────────────────────────────────────────────────────────────────
+    - The "Invoice on Record" section contains a JSON object.
+    - The "line_items" key is an array of individual line items, each
+      with: description, qty/quantity, unit_price, total.
+    - If the customer asks about line items, individual charges, what
+      they were billed for, or item-level breakdowns: READ the
+      line_items array and present each item's description, quantity,
+      and amount in your response.
+    - If line_items is null or empty, state that line item details are
+      not available and the FA team will follow up.
+    - NEVER say you don't have line item info if line_items is a
+      non-empty array — the data IS there, you must use it.
+    - NEVER quote invoice figures or line items in a CLARIFICATION PATH
+      response (Failure Pattern A or B above).
+
+    ─────────────────────────────────────────────────────────────────────
+    EMAIL FORMAT — apply to every response
+    ─────────────────────────────────────────────────────────────────────
+    - Subject line on the first line: "Subject: RE: {original subject}"
+    - A blank line after the subject.
+    - Salutation: "Dear [Customer]," (use sender name if known,
+      otherwise "Dear Customer,").
+    - Body paragraphs — write in flowing prose, NOT numbered lists.
+    - Closing: "Regards,\nAccounts Receivable Team"
+    - Footer — write this EXACTLY, verbatim, do NOT replace the
+      placeholder:
+          Your dispute reference: {DISPUTE_TOKEN}
+          Do Not Reply to this email. This is an Auto Generated Response.
+      The placeholder {DISPUTE_TOKEN} must appear literally in your
+      output. The system replaces it with the real reference number.
+    - Ask the customer to quote this reference in all future
+      correspondence.
+
+    TONE AND STYLE:
+      - Write as a thoughtful human colleague, not a ticketing system.
+      - Always address the customer in second person ("your invoice",
+        "your concern").
+      - NEVER describe the customer's issue in third-person
+        ("Customer disputes X").
+      - Avoid robotic openers like "We have reviewed your message and
+        registered N matters."
+      - Keep the tone warm, concise, and direct.
+      - If is_focused_issue is true: address ONLY the one described
+        issue — one short paragraph is enough.
+
+    questions_to_ask are for FA internal investigation notes — NEVER
+    shown to the customer.
 
     Return ONLY valid JSON with no markdown and no extra text.
   </hint>
