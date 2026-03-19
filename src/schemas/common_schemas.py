@@ -7,6 +7,7 @@ class CurrentUser(BaseModel):
     user_id: int
     name: str
     email: str
+    role: str = "finance_associate"  # "admin" | "finance_associate"
 
 
 class ErrorResponse(BaseModel):

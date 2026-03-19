@@ -154,14 +154,15 @@
       otherwise "Dear Customer,").
     - Body paragraphs — write in flowing prose, NOT numbered lists.
     - Closing: "Regards,\nAccounts Receivable Team"
-    - Footer — write this EXACTLY, verbatim, do NOT replace the
-      placeholder:
+    - Footer — write this EXACTLY, verbatim, character-for-character,
+      do NOT replace, modify, or paraphrase the placeholder text:
           Your dispute reference: {DISPUTE_TOKEN}
           Do Not Reply to this email. This is an Auto Generated Response.
-      The placeholder {DISPUTE_TOKEN} must appear literally in your
-      output. The system replaces it with the real reference number.
-    - Ask the customer to quote this reference in all future
-      correspondence.
+      {DISPUTE_TOKEN} is a system placeholder. Output it literally.
+      Do NOT substitute it with any reference number, date, or text.
+      Do NOT write "DISPUTE-2025-001" or "DISP-00001" or any other value.
+      The system will replace {DISPUTE_TOKEN} automatically after you respond.
+    - Ask the customer to quote this reference in all future correspondence.
 
     TONE AND STYLE:
       - Write as a thoughtful human colleague, not a ticketing system.

@@ -29,7 +29,7 @@ router = APIRouter(prefix="/disputes", tags=["Disputes"])
 
 @router.get("", response_model=DisputeListResponse)
 async def list_disputes(
-    status: Optional[str] = Query(None, description="OPEN/UNDER_REVIEW/RESOLVED/CLOSED"),
+    status: Optional[str] = Query(None, description="OPEN/UNDER_REVIEW/RESOLVED/CLOSED/UNVERIFIED"),
     priority: Optional[str] = Query(None, description="LOW/MEDIUM/HIGH"),
     customer_id: Optional[str] = Query(None),
     assigned_to: Optional[int] = Query(None, description="Filter by assigned user_id"),
@@ -39,11 +39,28 @@ async def list_disputes(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """List disputes with filters. Returns enriched items in a single request."""
+    """
+    List all incidents (disputes + clarifications).
+
+    Admin    → sees every record regardless of assignment, with no default filters.
+    FA       → sees only disputes assigned to them by default.
+               Pass assigned_to=0 explicitly to see unassigned ones too.
+    """
     service = DisputeService(db)
+    is_admin = current_user.role == "admin"
+
+    # Admin: no assignment filter unless explicitly requested
+    # FA:    restrict to their own assignments unless overridden
+    effective_assigned_to = assigned_to if is_admin else (assigned_to or current_user.user_id)
+
     enriched, total = await service.get_enriched_list(
-        status=status, priority=priority, customer_id=customer_id,
-        assigned_to=assigned_to, search=search, limit=limit, offset=offset,
+        status=status,
+        priority=priority,
+        customer_id=customer_id,
+        assigned_to=None if is_admin and assigned_to is None else effective_assigned_to,
+        search=search,
+        limit=limit,
+        offset=offset,
     )
     return DisputeListResponse(total=total, items=enriched)
 
@@ -349,7 +366,7 @@ async def upload_dispute_document(
         file_size=doc.file_size,
         display_name=doc.display_name,
         notes=doc.notes,
-        download_url=doc_service.get_download_url(doc),
+        download_url=await doc_service.get_download_url(doc),
         created_at=doc.created_at,
     )
 
@@ -377,7 +394,7 @@ async def list_dispute_documents(
             file_size=d.file_size,
             display_name=d.display_name,
             notes=d.notes,
-            download_url=doc_service.get_download_url(d),
+            download_url=await doc_service.get_download_url(d),
             created_at=d.created_at,
         )
         for d in docs
@@ -389,17 +406,20 @@ async def list_dispute_documents(
 async def download_dispute_document(
     dispute_id:   int,
     document_id:  int,
+    mode:         str         = Query("save", description="'view' to open inline, 'save' to force download"),
     db:           AsyncSession = Depends(get_db),
     current_user: CurrentUser  = Depends(get_current_user),
 ):
     """
-    Download a supporting document.
-    - GCS-stored docs: redirect to 30-min signed URL, fall back to streaming if GCS fails
-    - Local-stored docs: stream file bytes directly
+    Serve a supporting document.
+    mode=view  → Content-Disposition: inline  (browser renders PDF/image in tab)
+    mode=save  → Content-Disposition: attachment  (browser downloads)
+    - GCS: try signed URL redirect first, fall back to byte streaming
+    - Local: always stream bytes directly
     """
     from fastapi import HTTPException
     from fastapi.responses import StreamingResponse
-    import io
+    import io, mimetypes
 
     doc_service = DisputeDocumentService(db)
     doc = await doc_service.get_document(document_id)
@@ -407,9 +427,19 @@ async def download_dispute_document(
     if doc.dispute_id != dispute_id:
         raise HTTPException(status_code=404, detail="Document not found for this dispute")
 
-    # Try signed URL first (GCS paths only)
+    disposition = "inline" if mode == "view" else "attachment"
+
+    # Resolve MIME type — stored file_type may be wrong or octet-stream
+    mime = doc.file_type or "application/octet-stream"
+    if mime == "application/octet-stream":
+        guessed, _ = mimetypes.guess_type(doc.file_name)
+        if guessed:
+            mime = guessed
+
+    # Try signed URL for GCS paths (signed URLs always force download in browser)
+    # For view mode we skip redirect and always stream so we control Content-Disposition
     from src.core.services.dispute_document_service import GCS_PREFIX
-    if doc.file_path.startswith(GCS_PREFIX):
+    if doc.file_path.startswith(GCS_PREFIX) and mode == "save":
         try:
             from src.core.services.gcs_service import get_signed_url
             gcs_path = doc.file_path.removeprefix(GCS_PREFIX)
@@ -418,13 +448,16 @@ async def download_dispute_document(
         except Exception:
             pass  # Fall through to byte streaming
 
-    # Stream bytes (local files or GCS signed URL failed)
+    # Stream bytes — works for both local and GCS (fallback)
     try:
         data, filename = await doc_service.get_file_bytes(doc)
         return StreamingResponse(
             io.BytesIO(data),
-            media_type=doc.file_type or "application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            media_type=mime,
+            headers={
+                "Content-Disposition": f'{disposition}; filename="{filename}"',
+                "Content-Length": str(len(data)),
+            },
         )
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc))

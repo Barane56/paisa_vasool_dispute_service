@@ -510,23 +510,29 @@ class DisputeService:
                 except Exception:
                     pass
             active_assign = assign_map.get(d.dispute_id)
-            enriched.append(DisputeDetailResponse(
-                dispute_id=d.dispute_id,
-                email_id=d.email_id,
-                invoice_id=d.invoice_id,
-                payment_detail_id=d.payment_detail_id,
-                customer_id=d.customer_id,
-                dispute_type=d.dispute_type,
-                status=d.status,
-                priority=d.priority,
-                description=d.description,
-                created_at=d.created_at,
-                updated_at=d.updated_at,
-                latest_analysis=latest_analysis,
-                open_questions_count=q_count_map.get(d.dispute_id, 0),
-                assigned_to=active_assign.assignee.email if active_assign else None,
-                has_new_customer_message=ep_actor_map.get(d.dispute_id, False),
-            ))
+            try:
+                enriched.append(DisputeDetailResponse(
+                    dispute_id=d.dispute_id,
+                    email_id=d.email_id,               # Optional[int] — None for FA-created
+                    invoice_id=d.invoice_id,
+                    payment_detail_id=d.payment_detail_id,
+                    customer_id=d.customer_id,
+                    dispute_type=d.dispute_type,
+                    status=d.status,
+                    priority=d.priority,
+                    description=d.description,
+                    created_at=d.created_at,
+                    updated_at=d.updated_at,
+                    latest_analysis=latest_analysis,
+                    open_questions_count=q_count_map.get(d.dispute_id, 0),
+                    assigned_to=active_assign.assignee.email if active_assign else None,
+                    has_new_customer_message=ep_actor_map.get(d.dispute_id, False),
+                ))
+            except Exception as row_err:
+                import logging as _log
+                _log.getLogger(__name__).warning(
+                    f"Skipping dispute_id={d.dispute_id} from list (validation error): {row_err}"
+                )
         return enriched, total
 
     async def get_enriched_detail(self, dispute_id: int):
@@ -657,5 +663,6 @@ class DisputeService:
                 open_questions_count=q_count_map.get(d.dispute_id, 0),
                 assigned_to=active_assign.assignee.email if active_assign else None,
                 has_new_customer_message=ep_actor_map.get(d.dispute_id, False),
+                source=getattr(d, "source", "EMAIL") or "EMAIL",
             ))
         return results

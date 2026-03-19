@@ -76,8 +76,8 @@ class DisputeDocumentService:
         file_path: str
         if settings.GCS_ENABLED:
             try:
-                from src.core.services.gcs_service import upload_attachment, GCSUnavailable
-                gcs_path = upload_attachment(
+                from src.core.services.gcs_service import async_upload_attachment, GCSUnavailable
+                gcs_path = await async_upload_attachment(
                     file_bytes=file_bytes,
                     filename=safe_name,
                     folder=f"dispute_docs/dispute_{dispute_id}",
@@ -130,7 +130,7 @@ class DisputeDocumentService:
             raise ResourceNotFoundError(f"Document {document_id} not found")
         return doc
 
-    def get_download_url(self, doc: DisputeDocument) -> str:
+    async def get_download_url(self, doc: DisputeDocument) -> str:
         """
         Returns a URL the frontend can use to download the file.
         - GCS-stored + ADC available: returns signed URL (30 min)
@@ -140,8 +140,8 @@ class DisputeDocumentService:
         if doc.file_path.startswith(GCS_PREFIX):
             gcs_path = doc.file_path.removeprefix(GCS_PREFIX)
             try:
-                from src.core.services.gcs_service import get_signed_url, GCSUnavailable, GCSCredentialsUnavailable
-                return get_signed_url(gcs_path, expiry_minutes=30)
+                from src.core.services.gcs_service import async_get_signed_url, GCSUnavailable, GCSCredentialsUnavailable
+                return await async_get_signed_url(gcs_path, expiry_minutes=30)
             except Exception as exc:
                 logger.warning(
                     f"Signed URL unavailable for doc {doc.document_id} "
@@ -159,8 +159,8 @@ class DisputeDocumentService:
         if doc.file_path.startswith(GCS_PREFIX):
             gcs_path = doc.file_path.removeprefix(GCS_PREFIX)
             try:
-                from src.core.services.gcs_service import download_attachment
-                data = download_attachment(gcs_path)
+                from src.core.services.gcs_service import async_download_attachment
+                data = await async_download_attachment(gcs_path)
                 return data, doc.file_name
             except Exception as exc:
                 logger.error(f"GCS byte download failed for doc {doc.document_id}: {exc}")

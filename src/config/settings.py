@@ -30,7 +30,8 @@ class Settings(BaseSettings):
     # Groq API (replaces OpenAI)
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "llama-3.3-70b-versatile"          # heavy tasks: response generation, draft email
-    GROQ_FAST_MODEL: str = "llama-3.1-8b-instant"         # light tasks: classify, extract, detect, summarize
+    GROQ_FAST_MODEL: str = "llama-3.1-8b-instant"         # light tasks: extract, summarize
+    GROQ_REASONING_MODEL: str = "qwen/qwen3-32b"            # reasoning tasks: classify, detect context shift
     GROQ_INVOICE_MODEL: str = "llama-3.1-8b-instant"      # invoice extraction (8b handles JSON fine)
 
     GEMINI_API_KEY: str = ""
@@ -82,7 +83,7 @@ class Settings(BaseSettings):
     EMBEDDING_DIMS: int = 768
     EPISODE_SIMILARITY_THRESHOLD: float = 0.75
 
-    FASTEMBED_CACHE_PATH: str="/app/.fastembed_cache"
+    FASTEMBED_CACHE_PATH : str ="/app/.fastembed_cache"
 
     class Config:
         env_file = ".env"

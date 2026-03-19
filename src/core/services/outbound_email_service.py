@@ -36,7 +36,7 @@ ATTACHMENT_STORAGE_DIR = Path(getattr(settings, "ATTACHMENT_STORAGE_DIR", "/tmp/
 OUTBOUND_SUBDIR = ATTACHMENT_STORAGE_DIR / "outbound"
 OUTBOUND_SUBDIR.mkdir(parents=True, exist_ok=True)
 
-from src.core.services.gcs_service import upload_attachment as _gcs_upload, get_public_url as _gcs_url, GCSUnavailable
+from src.core.services.gcs_service import async_upload_attachment as _gcs_upload, get_public_url as _gcs_url, GCSUnavailable
 
 
 def _safe_filename(name: str) -> str:
@@ -135,7 +135,7 @@ class OutboundEmailService:
 
         if settings.GCS_ENABLED:
             try:
-                blob_path = _gcs_upload(file_bytes, file.filename or safe_name,
+                blob_path = await _gcs_upload(file_bytes, file.filename or safe_name,
                                         folder=f"outbound/dispute_{outbound_id}")
             except Exception as gcs_err:
                 logger.warning(

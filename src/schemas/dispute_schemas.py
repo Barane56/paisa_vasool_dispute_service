@@ -41,7 +41,7 @@ class AIAnalysisResponse(BaseModel):
 
 class DisputeResponse(BaseModel):
     dispute_id: int
-    email_id: Optional[int] 
+    email_id: Optional[int]
     invoice_id: Optional[int]
     payment_detail_id: Optional[int]
     customer_id: str
@@ -59,6 +59,7 @@ class DisputeDetailResponse(DisputeResponse):
     open_questions_count: int = 0
     assigned_to: Optional[str] = None
     has_new_customer_message: bool = False   # True when latest episode is from CUSTOMER
+    source: str = "EMAIL"                    # EMAIL | FA_MANUAL
 
 
 class DisputeListResponse(BaseModel):

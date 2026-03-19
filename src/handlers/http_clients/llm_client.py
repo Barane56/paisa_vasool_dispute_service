@@ -31,6 +31,7 @@ Install:
 """
 
 import logging
+import re
 import json
 import threading
 from typing import Optional, List
@@ -81,9 +82,10 @@ def _get_embed_model() -> TextEmbedding:
 class LLMClient:
     def __init__(self):
         self.client        = AsyncGroq(api_key=settings.GROQ_API_KEY)
-        self.model         = settings.GROQ_MODEL        # 70b — heavy tasks only
-        self.fast_model    = settings.GROQ_FAST_MODEL   # 8b — classify, extract, detect, summarize
-        self.invoice_model = settings.GROQ_INVOICE_MODEL
+        self.model           = settings.GROQ_MODEL            # 70b — heavy tasks only
+        self.fast_model      = settings.GROQ_FAST_MODEL       # 8b — extract, summarize
+        self.reasoning_model = settings.GROQ_REASONING_MODEL  # qwen/qwen3-32b — classify, detect context shift
+        self.invoice_model   = settings.GROQ_INVOICE_MODEL
 
     # ------------------------------------------------------------------ #
     # Generic chat                                                        #
@@ -135,6 +137,130 @@ class LLMClient:
         except Exception as e:
             logger.error(f"Groq fast chat error: {e}")
             raise LLMError(f"Groq API request failed: {e}")
+
+    # ------------------------------------------------------------------ #
+    # Reasoning chat — qwen/qwen3-32b for classify + context shift      #
+    #                                                                    #
+    # Groq supports reasoning_format="hidden" which suppresses the      #
+    # <think> block entirely — clean JSON lands directly in content.    #
+    # Also supports json_object response_format unlike qwen-qwq-32b.   #
+    #                                                                    #
+    # Guardrails:                                                        #
+    #   1. reasoning_format=hidden — no thinking pollution in output    #
+    #   2. response_format=json_object — Groq enforces valid JSON       #
+    #   3. Post-parse validation — catch any edge-case malformed output #
+    #   4. Retry up to MAX_RETRIES with correction turn on bad output   #
+    # ------------------------------------------------------------------ #
+
+    _REASONING_MAX_RETRIES = 3
+
+    async def chat_reasoning(self, prompt: str, system: str = None, json_mode: bool = True) -> str:
+        """
+        Uses GROQ_REASONING_MODEL (qwen/qwen3-32b) with strict guardrails.
+
+        reasoning_format="hidden" tells Groq to suppress the <think> block
+        and return only the final answer — no manual stripping needed.
+
+        response_format=json_object is supported by qwen3-32b on Groq,
+        so JSON compliance is enforced at the API level too.
+
+        Retries up to _REASONING_MAX_RETRIES times with a correction turn
+        if the output somehow fails json.loads() despite the above.
+        """
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+
+        json_suffix = (
+            "\n\nReturn ONLY a single valid JSON object. "
+            "No markdown. No code fences. No commentary. "
+            "Start with { and end with }."
+        ) if json_mode else ""
+        messages.append({"role": "user", "content": prompt + json_suffix})
+
+        kwargs = dict(
+            model=self.reasoning_model,
+            messages=messages,
+            temperature=0.1,
+            max_tokens=4096,
+            reasoning_format="hidden",   # suppress <think> block entirely
+        )
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+
+        last_error: Exception | None = None
+
+        for attempt in range(1, self._REASONING_MAX_RETRIES + 1):
+            try:
+                response = await self.client.chat.completions.create(**kwargs)
+                raw = response.choices[0].message.content or ""
+
+                # Clean any residual artifacts (defensive — hidden mode should be clean)
+                cleaned = self._clean_reasoning_output(raw)
+
+                if json_mode:
+                    try:
+                        json.loads(cleaned)
+                    except json.JSONDecodeError as parse_err:
+                        logger.warning(
+                            f"chat_reasoning attempt {attempt}/{self._REASONING_MAX_RETRIES}: "
+                            f"non-JSON output despite json_object format — retrying. "
+                            f"err={parse_err} snippet={cleaned[:200]!r}"
+                        )
+                        last_error = parse_err
+                        messages = [
+                            *messages,
+                            {"role": "assistant", "content": raw},
+                            {"role": "user", "content": (
+                                "Your previous response was not valid JSON. "
+                                "Output ONLY the JSON object — no markdown, no explanation. "
+                                "Start immediately with { and end with }."
+                            )},
+                        ]
+                        continue
+
+                return cleaned
+
+            except LLMError:
+                raise
+            except Exception as exc:
+                logger.error(
+                    f"chat_reasoning attempt {attempt}/{self._REASONING_MAX_RETRIES} "
+                    f"API error: {exc}"
+                )
+                last_error = exc
+                if attempt < self._REASONING_MAX_RETRIES:
+                    import asyncio as _asyncio
+                    await _asyncio.sleep(1.5 * attempt)
+
+        raise LLMError(
+            f"chat_reasoning failed after {self._REASONING_MAX_RETRIES} attempts. "
+            f"Last error: {last_error}"
+        )
+
+    @staticmethod
+    def _clean_reasoning_output(raw: str) -> str:
+        """
+        Defensive cleanup for qwen3-32b output.
+        With reasoning_format=hidden this should be a no-op in practice,
+        but we keep it as a safety net for any residual artifacts.
+        """
+        # Remove any stray <think> blocks (shouldn't appear with hidden mode)
+        cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+
+        # Strip markdown fences
+        if "```" in cleaned:
+            cleaned = re.sub(r"```[a-z]*\n?", "", cleaned)
+            cleaned = re.sub(r"\n?```", "", cleaned)
+            cleaned = cleaned.strip()
+
+        # If preamble text still wraps the JSON, extract first { } block
+        if cleaned and not cleaned.startswith(("{", "[")):
+            obj_match = re.search(r"(\{.*\}|\[.*\])", cleaned, flags=re.DOTALL)
+            if obj_match:
+                cleaned = obj_match.group(0).strip()
+
+        return cleaned
 
     # ------------------------------------------------------------------ #
     # Invoice data extraction                                             #

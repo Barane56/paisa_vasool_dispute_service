@@ -54,4 +54,9 @@ async def get_current_user(
             detail="User not found. Ensure auth service is seeding the same database.",
         )
 
-    return CurrentUser(user_id=user.user_id, name=user.name, email=user.email)
+    # Resolve role — user.user_roles is lazy joined on the User model
+    role_name = "finance_associate"
+    if user.user_roles and user.user_roles.role:
+        role_name = user.user_roles.role.role_name
+
+    return CurrentUser(user_id=user.user_id, name=user.name, email=user.email, role=role_name)

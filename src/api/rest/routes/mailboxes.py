@@ -245,10 +245,10 @@ async def download_inbound_attachment(
             # ADC not configured — fall through to byte streaming
             logger.warning(f"GCS signed URL unavailable, streaming inbound attachment {attachment_id} directly")
             try:
-                from src.core.services.gcs_service import download_attachment as _gcs_dl
+                from src.core.services.gcs_service import async_download_attachment as _gcs_dl
                 from fastapi.responses import StreamingResponse
                 import io
-                data = _gcs_dl(att.file_path)
+                data = await _gcs_dl(att.file_path)
                 return StreamingResponse(
                     io.BytesIO(data),
                     media_type=att.file_type or "application/octet-stream",
@@ -370,10 +370,10 @@ async def download_outbound_attachment(
         except GCSCredentialsUnavailable:
             logger.warning(f"GCS signed URL unavailable, streaming outbound attachment {attachment_id} directly")
             try:
-                from src.core.services.gcs_service import download_attachment as _gcs_dl
+                from src.core.services.gcs_service import async_download_attachment as _gcs_dl
                 from fastapi.responses import StreamingResponse
                 import io
-                data = _gcs_dl(att.file_path)
+                data = await _gcs_dl(att.file_path)
                 return StreamingResponse(
                     io.BytesIO(data),
                     media_type=att.file_type or "application/octet-stream",
