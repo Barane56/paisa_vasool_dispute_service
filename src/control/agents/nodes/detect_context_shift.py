@@ -189,7 +189,7 @@ async def node_detect_context_shift(
 
     # ── LLM call with full error isolation ───────────────────────────────────
     try:
-        raw_response = await llm_client.chat(prompt)
+        raw_response = await llm_client.chat_fast(prompt)
         data: Dict   = json.loads(raw_response)
     except json.JSONDecodeError as json_err:
         logger.error(

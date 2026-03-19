@@ -4,13 +4,15 @@ src/api/rest/routes/disputes.py
 Thin route layer — all business/query logic lives in DisputeService.
 Routes only handle HTTP concerns: extract params, call service, return response.
 """
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi.responses import RedirectResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
 
 from src.data.clients.postgres import get_db
 from src.core.services.dispute_service import DisputeService
 from src.core.services.draft_email_service import generate_draft_email
+from src.core.services.dispute_document_service import DisputeDocumentService
 from src.api.rest.dependencies import get_current_user
 from src.schemas.schemas import (
     CurrentUser, DisputeListResponse, DisputeDetailResponse, DisputeResponse,
@@ -18,6 +20,8 @@ from src.schemas.schemas import (
     AIAnalysisResponse, MemorySummaryResponse, TimelineEpisodeResponse,
     OpenQuestionResponse, QuestionStatusUpdate, SuccessResponse, TaskResponse,
     DraftEmailResponse,
+    FADisputeCreate,
+    DisputeDocumentResponse, DisputeDocumentListResponse,
 )
 
 router = APIRouter(prefix="/disputes", tags=["Disputes"])
@@ -226,6 +230,9 @@ async def draft_email_reply(
 
     dispute_type_name = dispute.dispute_type.reason_name if dispute.dispute_type else None
 
+    # Pass the FA's real name so the draft sounds personal
+    fa_name = current_user.name if hasattr(current_user, 'name') else None
+
     draft_body = await generate_draft_email(
         dispute_id=dispute_id,
         db=db,
@@ -234,6 +241,7 @@ async def draft_email_reply(
         status=dispute.status,
         priority=dispute.priority,
         ai_summary=ai_summary,
+        fa_name=fa_name,
     )
 
     suggested_subject = (
@@ -246,3 +254,196 @@ async def draft_email_reply(
         customer_id=dispute.customer_id,
         suggested_subject=suggested_subject,
     )
+
+
+@router.patch("/{dispute_id}/mark-read", response_model=SuccessResponse)
+async def mark_dispute_read(
+    dispute_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    FA has opened and read the dispute — clears the new message flag.
+    Called by the frontend when the dispute modal is opened.
+    """
+    from src.data.repositories.dispute_repository import DisputeNewMessageRepository
+    await DisputeNewMessageRepository(db).clear_new_message(dispute_id)
+    await db.commit()
+    return SuccessResponse(message=f"Dispute {dispute_id} marked as read")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FA Manual Dispute Creation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/create", response_model=DisputeDetailResponse, status_code=status.HTTP_201_CREATED)
+async def create_dispute_manually(
+    data: FADisputeCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Finance Associate creates a dispute manually — no inbound email required.
+
+    - Pick an existing dispute_type_id from GET /dispute-types, OR
+    - Leave dispute_type_id null and provide custom_type_name to auto-create
+      a new dispute type on the fly.
+
+    The dispute is auto-assigned to the creating FA and set to OPEN.
+    """
+    service = DisputeService(db)
+    dispute = await service.create_fa_dispute(
+        customer_id=data.customer_id,
+        dispute_type_id=data.dispute_type_id,
+        custom_type_name=data.custom_type_name,
+        custom_type_desc=data.custom_type_desc,
+        priority=data.priority,
+        description=data.description,
+        invoice_id=data.invoice_id,
+        created_by=current_user.user_id,
+    )
+    return await service.get_enriched_detail(dispute.dispute_id)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Dispute Supporting Documents  (FA-uploaded files)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.post(
+    "/{dispute_id}/documents",
+    response_model=DisputeDocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_dispute_document(
+    dispute_id:   int,
+    file:         UploadFile  = File(..., description="Any file — PDF, image, spreadsheet, etc."),
+    display_name: str | None  = Form(None, description="Human-readable label for this document"),
+    notes:        str | None  = Form(None, description="Why this document is relevant"),
+    db:           AsyncSession = Depends(get_db),
+    current_user: CurrentUser  = Depends(get_current_user),
+):
+    """
+    Upload a supporting document to a dispute.
+    Accepts any file type. Stored in GCS (or local fallback).
+    Returns a download_url valid for 30 minutes (re-fetch to get a fresh one).
+    """
+    # Verify dispute exists
+    service = DisputeService(db)
+    await service.get_dispute(dispute_id)
+
+    doc_service = DisputeDocumentService(db)
+    doc = await doc_service.upload_document(
+        dispute_id=dispute_id,
+        uploaded_by=current_user.user_id,
+        file=file,
+        display_name=display_name,
+        notes=notes,
+    )
+    return DisputeDocumentResponse(
+        document_id=doc.document_id,
+        dispute_id=doc.dispute_id,
+        uploaded_by=doc.uploaded_by,
+        uploader_name=doc.uploader.name if doc.uploader else None,
+        file_name=doc.file_name,
+        file_type=doc.file_type,
+        file_size=doc.file_size,
+        display_name=doc.display_name,
+        notes=doc.notes,
+        download_url=doc_service.get_download_url(doc),
+        created_at=doc.created_at,
+    )
+
+
+@router.get("/{dispute_id}/documents", response_model=DisputeDocumentListResponse)
+async def list_dispute_documents(
+    dispute_id:   int,
+    db:           AsyncSession = Depends(get_db),
+    current_user: CurrentUser  = Depends(get_current_user),
+):
+    """List all FA-uploaded supporting documents for a dispute."""
+    service = DisputeService(db)
+    await service.get_dispute(dispute_id)
+
+    doc_service = DisputeDocumentService(db)
+    docs = await doc_service.list_documents(dispute_id)
+    items = [
+        DisputeDocumentResponse(
+            document_id=d.document_id,
+            dispute_id=d.dispute_id,
+            uploaded_by=d.uploaded_by,
+            uploader_name=d.uploader.name if d.uploader else None,
+            file_name=d.file_name,
+            file_type=d.file_type,
+            file_size=d.file_size,
+            display_name=d.display_name,
+            notes=d.notes,
+            download_url=doc_service.get_download_url(d),
+            created_at=d.created_at,
+        )
+        for d in docs
+    ]
+    return DisputeDocumentListResponse(dispute_id=dispute_id, total=len(items), items=items)
+
+
+@router.get("/{dispute_id}/documents/{document_id}/download")
+async def download_dispute_document(
+    dispute_id:   int,
+    document_id:  int,
+    db:           AsyncSession = Depends(get_db),
+    current_user: CurrentUser  = Depends(get_current_user),
+):
+    """
+    Download a supporting document.
+    - GCS-stored docs: redirect to 30-min signed URL, fall back to streaming if GCS fails
+    - Local-stored docs: stream file bytes directly
+    """
+    from fastapi import HTTPException
+    from fastapi.responses import StreamingResponse
+    import io
+
+    doc_service = DisputeDocumentService(db)
+    doc = await doc_service.get_document(document_id)
+
+    if doc.dispute_id != dispute_id:
+        raise HTTPException(status_code=404, detail="Document not found for this dispute")
+
+    # Try signed URL first (GCS paths only)
+    from src.core.services.dispute_document_service import GCS_PREFIX
+    if doc.file_path.startswith(GCS_PREFIX):
+        try:
+            from src.core.services.gcs_service import get_signed_url
+            gcs_path = doc.file_path.removeprefix(GCS_PREFIX)
+            url = get_signed_url(gcs_path, expiry_minutes=30)
+            return RedirectResponse(url=url, status_code=302)
+        except Exception:
+            pass  # Fall through to byte streaming
+
+    # Stream bytes (local files or GCS signed URL failed)
+    try:
+        data, filename = await doc_service.get_file_bytes(doc)
+        return StreamingResponse(
+            io.BytesIO(data),
+            media_type=doc.file_type or "application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.delete("/{dispute_id}/documents/{document_id}", response_model=SuccessResponse)
+async def delete_dispute_document(
+    dispute_id:   int,
+    document_id:  int,
+    db:           AsyncSession = Depends(get_db),
+    current_user: CurrentUser  = Depends(get_current_user),
+):
+    """Delete a supporting document. Removes from GCS/local and DB."""
+    doc_service = DisputeDocumentService(db)
+    doc = await doc_service.get_document(document_id)
+
+    if doc.dispute_id != dispute_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Document not found for this dispute")
+
+    await doc_service.delete_document(document_id)
+    return SuccessResponse(message=f"Document {document_id} deleted")

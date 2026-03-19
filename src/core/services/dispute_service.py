@@ -327,6 +327,88 @@ class DisputeService:
         await self.db.commit()
         return question
 
+    async def create_fa_dispute(
+        self,
+        customer_id:      str,
+        dispute_type_id:  int | None,
+        custom_type_name: str | None,
+        custom_type_desc: str | None,
+        priority:         str,
+        description:      str,
+        invoice_id:       int | None,
+        created_by:       int,
+    ):
+        """
+        Create a dispute manually by a Finance Associate (no inbound email).
+        If dispute_type_id is None, creates a new DisputeType from custom_type_name.
+        """
+        from src.data.models.postgres.dispute_models import DisputeType
+        from src.data.models.postgres.models import DisputeActivityLog
+        from sqlalchemy import select as sa_select_inner
+
+        # ── Resolve or create dispute type ────────────────────────────────────
+        if dispute_type_id:
+            dtype = await self.dtype_repo.get_by_id(dispute_type_id)
+            if not dtype:
+                raise DisputeTypeNotFoundError(dispute_type_id)
+        else:
+            # Check if a type with this name already exists
+            existing = (await self.db.execute(
+                sa_select_inner(DisputeType).where(DisputeType.reason_name == custom_type_name)
+            )).scalar_one_or_none()
+            if existing:
+                dtype = existing
+            else:
+                dtype = DisputeType(
+                    reason_name=custom_type_name,
+                    description=custom_type_desc or custom_type_name,
+                    is_active=True,
+                )
+                self.db.add(dtype)
+                await self.db.flush()
+
+        # ── Create dispute ────────────────────────────────────────────────────
+        from src.data.models.postgres.models import DisputeMaster as DisputeMasterModel
+        import uuid
+        dispute = DisputeMasterModel(
+            email_id=None,         # FA-created — no source email
+            customer_id=customer_id,
+            dispute_type_id=dtype.dispute_type_id,
+            invoice_id=invoice_id,
+            status="OPEN",
+            priority=priority,
+            description=description,
+            source="FA_MANUAL",
+            dispute_token=f"DISP-FA-{uuid.uuid4().hex[:8].upper()}",
+        )
+        self.db.add(dispute)
+        await self.db.flush()
+
+        # ── Auto-assign to creating FA ────────────────────────────────────────
+        from src.data.models.postgres.models import DisputeAssignment
+        assignment = DisputeAssignment(
+            dispute_id=dispute.dispute_id,
+            assigned_to=created_by,
+            status="ACTIVE",
+        )
+        self.db.add(assignment)
+
+        # ── Activity log ──────────────────────────────────────────────────────
+        self.db.add(DisputeActivityLog(
+            dispute_id=dispute.dispute_id,
+            action_type="CREATED",
+            performed_by=created_by,
+            notes=f"Dispute created manually by FA. Type: {dtype.reason_name}.",
+        ))
+
+        await self.db.commit()
+        await self.db.refresh(dispute)
+        logger.info(
+            f"FA-created dispute: dispute_id={dispute.dispute_id} "
+            f"customer={customer_id} type={dtype.reason_name} by user={created_by}"
+        )
+        return dispute
+
     async def get_enriched_list(
         self,
         status: str | None = None,
@@ -409,26 +491,13 @@ class DisputeService:
             )).all()
         }
 
-        # ── Latest episode actor per dispute ──────────────────────────────────
-        max_ep_sq = (
-            sa_select(
-                DisputeMemoryEpisode.dispute_id,
-                sa_func.max(DisputeMemoryEpisode.episode_id).label("max_ep_id"),
-            )
-            .where(DisputeMemoryEpisode.dispute_id.in_(id_list))
-            .group_by(DisputeMemoryEpisode.dispute_id)
-            .subquery()
-        )
-        ep_actor_map = {
-            row.dispute_id: row.actor
-            for row in (await self.db.execute(
-                sa_select(DisputeMemoryEpisode.dispute_id, DisputeMemoryEpisode.actor)
-                .join(max_ep_sq, sa_and_(
-                    DisputeMemoryEpisode.dispute_id == max_ep_sq.c.dispute_id,
-                    DisputeMemoryEpisode.episode_id == max_ep_sq.c.max_ep_id,
-                ))
-            )).all()
-        }
+        # ── has_new_customer_message per dispute — from dispute_new_message table ──
+        from src.data.models.postgres.dispute_models import DisputeNewMessage
+        new_msg_rows = (await self.db.execute(
+            sa_select(DisputeNewMessage.dispute_id, DisputeNewMessage.has_new_message)
+            .where(DisputeNewMessage.dispute_id.in_(id_list))
+        )).all()
+        ep_actor_map = {row.dispute_id: bool(row.has_new_message) for row in new_msg_rows}
 
         # ── Assemble ──────────────────────────────────────────────────────────
         enriched = []
@@ -456,7 +525,7 @@ class DisputeService:
                 latest_analysis=latest_analysis,
                 open_questions_count=q_count_map.get(d.dispute_id, 0),
                 assigned_to=active_assign.assignee.email if active_assign else None,
-                has_new_customer_message=(ep_actor_map.get(d.dispute_id) == "CUSTOMER"),
+                has_new_customer_message=ep_actor_map.get(d.dispute_id, False),
             ))
         return enriched, total
 
@@ -482,8 +551,8 @@ class DisputeService:
 
         has_new = False
         try:
-            latest_eps = await self.ep_repo.get_latest_n(dispute_id, n=1)
-            has_new = bool(latest_eps and latest_eps[0].actor == "CUSTOMER")
+            from src.data.repositories.dispute_repository import DisputeNewMessageRepository
+            has_new = await DisputeNewMessageRepository(self.db).get_for_dispute(dispute_id)
         except Exception:
             pass
 
@@ -561,17 +630,13 @@ class DisputeService:
             .group_by(DisputeOpenQuestion.dispute_id)
         )).all()}
 
-        max_ep_sq = (
-            sa_select(DisputeMemoryEpisode.dispute_id, sa_func.max(DisputeMemoryEpisode.episode_id).label("max_ep_id"))
-            .where(DisputeMemoryEpisode.dispute_id.in_(ids)).group_by(DisputeMemoryEpisode.dispute_id).subquery()
-        )
-        ep_actor_map = {row.dispute_id: row.actor for row in (await self.db.execute(
-            sa_select(DisputeMemoryEpisode.dispute_id, DisputeMemoryEpisode.actor)
-            .join(max_ep_sq, sa_and_(
-                DisputeMemoryEpisode.dispute_id == max_ep_sq.c.dispute_id,
-                DisputeMemoryEpisode.episode_id == max_ep_sq.c.max_ep_id,
-            ))
-        )).all()}
+        # ── has_new_customer_message — from dispute_new_message table ───────────
+        from src.data.models.postgres.dispute_models import DisputeNewMessage
+        new_msg_rows2 = (await self.db.execute(
+            sa_select(DisputeNewMessage.dispute_id, DisputeNewMessage.has_new_message)
+            .where(DisputeNewMessage.dispute_id.in_(ids))
+        )).all()
+        ep_actor_map = {row.dispute_id: bool(row.has_new_message) for row in new_msg_rows2}
 
         results = []
         for d in disputes:
@@ -591,6 +656,6 @@ class DisputeService:
                 latest_analysis=latest_analysis,
                 open_questions_count=q_count_map.get(d.dispute_id, 0),
                 assigned_to=active_assign.assignee.email if active_assign else None,
-                has_new_customer_message=(ep_actor_map.get(d.dispute_id) == "CUSTOMER"),
+                has_new_customer_message=ep_actor_map.get(d.dispute_id, False),
             ))
         return results

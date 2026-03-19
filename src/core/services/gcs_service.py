@@ -1,13 +1,14 @@
 """
 src/core/services/gcs_service.py
 =================================
-Thin GCS wrapper for dispute attachment storage.
-Uploads bytes  → returns blob path stored in DB.
-Downloads bytes → used when attaching files to outbound SMTP.
-Signed URL     → short-lived download link returned to frontend (15 min).
+GCS wrapper for dispute attachment storage.
 
-Bucket uses Uniform Bucket-Level Access (UBA) so per-object ACLs are
-disabled. Public access is via signed URLs — no allUsers IAM grant needed.
+Storage mode is controlled by GCS_ENABLED in settings (.env):
+  GCS_ENABLED=True   → use Google Cloud Storage (production)
+  GCS_ENABLED=False  → use local filesystem (development / no GCS creds)
+
+All public functions fall back to raising GCSUnavailable when GCS init
+fails — callers catch this and use local storage instead.
 """
 from __future__ import annotations
 
@@ -22,35 +23,53 @@ logger = logging.getLogger(__name__)
 
 _bucket = None
 _storage_client = None
+_gcs_init_failed = False   # once we know GCS is broken, stop retrying
+
+
+class GCSUnavailable(Exception):
+    """GCS is not available — caller should use local storage fallback."""
 
 
 def _get_bucket():
-    global _bucket, _storage_client
+    global _bucket, _storage_client, _gcs_init_failed
+
+    # If we already know GCS is broken, skip immediately
+    if _gcs_init_failed:
+        raise GCSUnavailable("GCS previously failed to initialise — using local storage")
+
     if _bucket is not None:
         return _bucket
+
     try:
         from google.cloud import storage
+        from google.auth.exceptions import DefaultCredentialsError
     except ImportError as exc:
-        raise RuntimeError(
-            "Missing dependency 'google-cloud-storage'. "
-            "Run: uv add google-cloud-storage"
+        _gcs_init_failed = True
+        raise GCSUnavailable(
+            "Missing dependency 'google-cloud-storage'. Run: uv add google-cloud-storage"
         ) from exc
 
-    _storage_client = storage.Client(project=settings.GCS_PROJECT_ID)
-    _bucket = _storage_client.bucket(settings.GCS_BUCKET_NAME)
-    logger.info(f"GCS bucket initialised: {settings.GCS_BUCKET_NAME}")
-    return _bucket
+    try:
+        _storage_client = storage.Client(project=settings.GCS_PROJECT_ID)
+        _bucket = _storage_client.bucket(settings.GCS_BUCKET_NAME)
+        logger.info(f"GCS bucket initialised: {settings.GCS_BUCKET_NAME}")
+        return _bucket
+    except Exception as exc:
+        _gcs_init_failed = True
+        logger.warning(
+            f"GCS init failed (will use local storage fallback): {exc}"
+        )
+        raise GCSUnavailable(f"GCS client init failed: {exc}") from exc
+
+
+# Keep backward compat alias
+GCSCredentialsUnavailable = GCSUnavailable
 
 
 def upload_attachment(file_bytes: bytes, filename: str, folder: str) -> str:
     """
-    Upload bytes to GCS under:
-      {GCS_BUCKET_PREFIX}/attachments/{folder}/{uuid}_{filename}
-
-    Returns the blob path — stored in DB as file_path.
-    folder examples:
-      "inbound/mailbox_1"   for emails received
-      "outbound/dispute_3"  for FA-sent attachments
+    Upload to GCS. Raises GCSUnavailable if GCS is not reachable.
+    Callers must catch and fall back to local storage.
     """
     safe_name   = Path(filename).name.replace(" ", "_")[:100]
     unique_name = f"{uuid.uuid4().hex}_{safe_name}"
@@ -58,15 +77,13 @@ def upload_attachment(file_bytes: bytes, filename: str, folder: str) -> str:
 
     blob = _get_bucket().blob(blob_path)
     blob.upload_from_string(file_bytes, content_type="application/octet-stream")
-    # No make_public() — bucket has UBA enabled, per-object ACLs are disabled.
-
     logger.info(f"GCS upload: {blob_path}")
     return blob_path
 
 
 def download_attachment(blob_path: str) -> bytes:
-    """Download bytes from GCS by blob path (as stored in DB).
-    Used internally by smtp_service when attaching files to outbound emails.
+    """
+    Download bytes from GCS. Raises GCSUnavailable if GCS is not reachable.
     """
     blob = _get_bucket().blob(blob_path)
     data = blob.download_as_bytes()
@@ -76,26 +93,33 @@ def download_attachment(blob_path: str) -> bytes:
 
 def get_signed_url(blob_path: str, expiry_minutes: int = 15) -> str:
     """
-    Generate a short-lived signed URL for a GCS object.
-    Valid for `expiry_minutes` (default 15). After expiry the link returns 403.
-
-    Uses service account impersonation if GCS_TARGET_SERVICE_ACCOUNT is set,
-    otherwise falls back to the default credentials (works on Cloud Run with
-    the Compute Engine SA having iam.serviceAccountTokenCreator role).
+    Generate a short-lived signed URL.
+    Raises GCSUnavailable if ADC credentials are not configured.
+    Callers must catch and fall back to API byte-streaming.
     """
+    # First make sure the bucket is reachable (raises GCSUnavailable if not)
+    _get_bucket()
+
     try:
         import google.auth
         import google.auth.transport.requests
         from google.auth import impersonated_credentials
+        from google.auth.exceptions import DefaultCredentialsError
 
-        # Get source credentials
-        source_credentials, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        # Refresh so we have a valid token
+        try:
+            source_credentials, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+        except DefaultCredentialsError as cred_err:
+            raise GCSUnavailable(
+                "Application Default Credentials not found. "
+                "Set GOOGLE_APPLICATION_CREDENTIALS or run "
+                "'gcloud auth application-default login'. "
+                f"Original: {cred_err}"
+            ) from cred_err
+
         source_credentials.refresh(google.auth.transport.requests.Request())
 
-        # If a target SA is configured, impersonate it for signing
         target_sa = (settings.GCS_TARGET_SERVICE_ACCOUNT or "").strip()
         if target_sa:
             signing_credentials = impersonated_credentials.Credentials(
@@ -117,14 +141,15 @@ def get_signed_url(blob_path: str, expiry_minutes: int = 15) -> str:
         logger.info(f"GCS signed URL generated for {blob_path} (expires {expiry_minutes}m)")
         return url
 
-    except Exception as exc:
-        logger.error(f"Failed to generate signed URL for {blob_path}: {exc}")
+    except GCSUnavailable:
         raise
+    except Exception as exc:
+        raise GCSUnavailable(f"Signed URL generation failed: {exc}") from exc
 
 
 def get_public_url(blob_path: str) -> str:
     """
-    Returns a signed URL (preferred) or falls back to the plain GCS URL.
-    This is the function called by the download endpoints in mailboxes.py.
+    Returns a signed URL. Raises GCSUnavailable if ADC missing.
+    Callers must catch and fall back to byte streaming.
     """
     return get_signed_url(blob_path)

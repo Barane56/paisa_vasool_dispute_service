@@ -36,7 +36,7 @@ ATTACHMENT_STORAGE_DIR = Path(getattr(settings, "ATTACHMENT_STORAGE_DIR", "/tmp/
 OUTBOUND_SUBDIR = ATTACHMENT_STORAGE_DIR / "outbound"
 OUTBOUND_SUBDIR.mkdir(parents=True, exist_ok=True)
 
-from src.core.services.gcs_service import upload_attachment as _gcs_upload, get_public_url as _gcs_url
+from src.core.services.gcs_service import upload_attachment as _gcs_upload, get_public_url as _gcs_url, GCSUnavailable
 
 
 def _safe_filename(name: str) -> str:
@@ -131,16 +131,31 @@ class OutboundEmailService:
         file_bytes  = await file.read()
         ext         = Path(file.filename or "").suffix.lower().lstrip(".") or "bin"
 
+        blob_path: str
+
         if settings.GCS_ENABLED:
-            blob_path = _gcs_upload(file_bytes, file.filename or safe_name,
-                                    folder=f"outbound/dispute_{outbound_id}")
+            try:
+                blob_path = _gcs_upload(file_bytes, file.filename or safe_name,
+                                        folder=f"outbound/dispute_{outbound_id}")
+            except Exception as gcs_err:
+                logger.warning(
+                    f"GCS upload failed for outbound {outbound_id}, "
+                    f"falling back to local storage: {gcs_err}"
+                )
+                # Fall through to local storage below
+                settings_gcs_ok = False
+            else:
+                settings_gcs_ok = True
         else:
-            # Local fallback
+            settings_gcs_ok = False
+
+        if not settings_gcs_ok:
             unique_name = f"{uuid.uuid4().hex}_{safe_name}"
             subdir = OUTBOUND_SUBDIR / str(outbound_id)
             subdir.mkdir(parents=True, exist_ok=True)
             (subdir / unique_name).write_bytes(file_bytes)
             blob_path = str(Path("outbound") / str(outbound_id) / unique_name)
+            logger.info(f"Outbound attachment saved locally: {blob_path}")
 
         return {
             "file_name": file.filename or safe_name,

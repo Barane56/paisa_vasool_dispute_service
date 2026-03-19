@@ -1,13 +1,7 @@
 """
 src/core/services/draft_email_service.py
 =========================================
-Generates an AI email draft for a Finance Associate using Groq.
-
-Reads the full dispute timeline (memory episodes) + dispute metadata,
-builds a structured prompt, calls Groq llama-3.3-70b-versatile,
-and returns a ready-to-send draft body.
-
-The FA reviews and edits before sending — this is a DRAFT helper, not auto-send.
+Generates a professional AI email draft for a Finance Associate using Groq.
 """
 from __future__ import annotations
 
@@ -16,11 +10,7 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.data.repositories.repositories import (
-    MemoryEpisodeRepository,
-    DisputeAIAnalysisRepository,
-)
-from src.core.exceptions import DisputeNotFoundError
+from src.data.repositories.repositories import MemoryEpisodeRepository
 from src.handlers.http_clients.llm_client import get_llm_client
 
 logger = logging.getLogger(__name__)
@@ -36,7 +26,7 @@ Guidelines:
 - Reference relevant facts from the conversation (amounts, invoice numbers, dates)
 - Keep responses concise — under 200 words
 - Do NOT write a subject line or salutation — write only the email body
-- End with: Best regards,\\nFinance Team, PaisaVasool
+- End with: Best regards,\nFinance Team, PaisaVasool
 - Output ONLY the email body text, nothing else, no preamble
 """
 
@@ -49,17 +39,11 @@ async def generate_draft_email(
     status: str,
     priority: str,
     ai_summary: Optional[str],
+    fa_name: Optional[str] = None,
 ) -> str:
-    """
-    Generate a draft email reply for a dispute using Groq.
-
-    Returns the draft body text string.
-    Raises LLMError if Groq call fails.
-    """
     ep_repo  = MemoryEpisodeRepository(db)
     episodes = await ep_repo.get_episodes_for_dispute(dispute_id)
 
-    # Build readable transcript
     transcript_lines = []
     for ep in episodes:
         role_map = {
@@ -93,6 +77,6 @@ Write a professional email reply to the customer addressing their most recent co
     draft = await llm.chat(
         prompt=user_prompt,
         system=DRAFT_SYSTEM_PROMPT,
-        json_mode=False,   # plain text output, not JSON
+        json_mode=False,
     )
     return draft.strip()

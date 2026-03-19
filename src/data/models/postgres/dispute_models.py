@@ -3,7 +3,7 @@
 #                     DisputeAssignment, DisputeOpenQuestion,
 #                     DisputeActivityLog, DisputeStatusHistory
 from sqlalchemy import (
-    Column, Enum, Integer, String, Text, Boolean, Numeric,
+    Column, Enum, Integer, String, Text, Boolean, Numeric, BigInteger,
     TIMESTAMP, ForeignKey, Index, func, text,
     Enum as SQLEnum,
 )
@@ -41,7 +41,7 @@ class DisputeMaster(Base):
     __tablename__ = "dispute_master"
 
     dispute_id        = Column(Integer, primary_key=True)
-    email_id          = Column(Integer, ForeignKey("email_inbox.email_id",             ondelete="RESTRICT"), nullable=False)
+    email_id          = Column(Integer, ForeignKey("email_inbox.email_id",             ondelete="RESTRICT"), nullable=True)   # nullable for FA-created disputes
     invoice_id        = Column(Integer, ForeignKey("invoice_data.invoice_id",          ondelete="SET NULL"), nullable=True)
     payment_detail_id = Column(Integer, ForeignKey("payment_detail.payment_detail_id", ondelete="SET NULL"), nullable=True)
     customer_id       = Column(String(100), nullable=False)
@@ -49,6 +49,7 @@ class DisputeMaster(Base):
     status            = Column(String(50), nullable=False)
     priority          = Column(String(20), nullable=False, default="MEDIUM", server_default="MEDIUM")
     description       = Column(Text, nullable=False)
+    source            = Column(String(20), nullable=False, default="EMAIL", server_default="EMAIL")  # EMAIL | FA_MANUAL
     dispute_token     = Column(String(32), unique=True, nullable=True)
     parent_dispute_id = Column(Integer, ForeignKey("dispute_master.dispute_id", ondelete="SET NULL", use_alter=True, name="fk_dispute_master_parent_id"), nullable=True)
     created_at        = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
@@ -70,6 +71,8 @@ class DisputeMaster(Base):
     parent_dispute          = relationship("DisputeMaster",        foreign_keys=[parent_dispute_id],                    lazy="select", back_populates="forked_disputes", remote_side="DisputeMaster.dispute_id")
     relationships_as_source = relationship("DisputeRelationship",  foreign_keys="DisputeRelationship.source_dispute_id", back_populates="source_dispute", lazy="select", cascade="all, delete-orphan")
     relationships_as_target = relationship("DisputeRelationship",  foreign_keys="DisputeRelationship.target_dispute_id", back_populates="target_dispute", lazy="select", cascade="all, delete-orphan")
+    new_message_flag        = relationship("DisputeNewMessage",      back_populates="dispute",                             lazy="select", uselist=False, cascade="all, delete-orphan")
+    supporting_documents    = relationship("DisputeDocument",          back_populates="dispute",                             lazy="select", cascade="all, delete-orphan", order_by="DisputeDocument.created_at")
 
     __table_args__ = (
         Index("ix_dispute_master_customer_id",       "customer_id"),
@@ -230,4 +233,50 @@ class DisputeStatusHistory(Base):
         Index("ix_status_history_dispute_id",   "dispute_id"),
         Index("ix_status_history_performed_by", "performed_by"),
         Index("ix_status_history_created_at",   "created_at"),
+    )
+
+
+class DisputeNewMessage(Base):
+    """
+    One row per dispute. has_new_message=True means the customer sent a message
+    that no FA or AI has responded to yet.
+    Written by the agent (persist_results) when a CUSTOMER episode is saved.
+    Cleared by PATCH /disputes/{id}/mark-read called from the frontend.
+    """
+    __tablename__ = "dispute_new_message"
+
+    dispute_id      = Column(Integer, ForeignKey("dispute_master.dispute_id", ondelete="CASCADE"), primary_key=True)
+    has_new_message = Column(Boolean, nullable=False, default=True, server_default=text("TRUE"))
+    arrived_at      = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    updated_at      = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    dispute = relationship("DisputeMaster", back_populates="new_message_flag", lazy="select")
+
+
+class DisputeDocument(Base):
+    """
+    Supporting document manually uploaded by a Finance Associate.
+    Separate from email_message_attachments (inbound email files)
+    and outbound_email_attachments (FA reply files).
+    """
+    __tablename__ = "dispute_documents"
+
+    document_id  = Column(Integer, primary_key=True)
+    dispute_id   = Column(Integer, ForeignKey("dispute_master.dispute_id", ondelete="CASCADE"),  nullable=False)
+    uploaded_by  = Column(Integer, ForeignKey("users.user_id",             ondelete="RESTRICT"), nullable=False)
+    file_name    = Column(String(255), nullable=False)
+    file_type    = Column(String(100), nullable=False)
+    file_size    = Column(BigInteger,  nullable=True)
+    file_path    = Column(Text,        nullable=False)
+    display_name = Column(String(255), nullable=True)
+    notes        = Column(Text,        nullable=True)
+    created_at   = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    dispute  = relationship("DisputeMaster", back_populates="supporting_documents", lazy="select")
+    uploader = relationship("User",          lazy="joined", foreign_keys=[uploaded_by])
+
+    __table_args__ = (
+        Index("ix_dispute_documents_dispute_id",  "dispute_id"),
+        Index("ix_dispute_documents_uploaded_by", "uploaded_by"),
+        Index("ix_dispute_documents_created_at",  "created_at"),
     )

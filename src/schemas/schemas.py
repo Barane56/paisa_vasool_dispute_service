@@ -13,4 +13,6 @@ from .dispute_schemas import (
     MemorySummaryResponse, QuestionStatusUpdate,
     SupportingRefResponse, SupportingRefCreate, SupportingRefListResponse,
     DraftEmailResponse,
+    FADisputeCreate,
+    DisputeDocumentResponse, DisputeDocumentListResponse,
 )

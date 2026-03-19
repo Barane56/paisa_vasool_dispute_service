@@ -29,8 +29,9 @@ class Settings(BaseSettings):
 
     # Groq API (replaces OpenAI)
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"          # chat/classify/respond
-    GROQ_INVOICE_MODEL: str = "llama-3.3-70b-versatile"   # invoice data extraction
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"          # heavy tasks: response generation, draft email
+    GROQ_FAST_MODEL: str = "llama-3.1-8b-instant"         # light tasks: classify, extract, detect, summarize
+    GROQ_INVOICE_MODEL: str = "llama-3.1-8b-instant"      # invoice extraction (8b handles JSON fine)
 
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.0-flash"
@@ -50,7 +51,7 @@ class Settings(BaseSettings):
     ATTACHMENT_STORAGE_DIR: str = "/tmp/dispute_attachments"
 
     # ── Google Cloud Storage ──────────────────────────────────────────────────
-    GCS_ENABLED: bool = True
+    GCS_ENABLED: bool = False   # set True in production .env when GCS is configured
     GCS_PROJECT_ID: str = ""
     GCS_BUCKET_NAME: str = ""
     GCS_BUCKET_PREFIX: str = ""
@@ -81,7 +82,7 @@ class Settings(BaseSettings):
     EMBEDDING_DIMS: int = 768
     EPISODE_SIMILARITY_THRESHOLD: float = 0.75
 
-    FASTEMBED_CACHE_PATH: str = "/app/.fastembed_cache"
+    FASTEMBED_CACHE_PATH: str="/app/.fastembed_cache"
 
     class Config:
         env_file = ".env"

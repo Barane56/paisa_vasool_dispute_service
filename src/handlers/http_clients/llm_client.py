@@ -81,7 +81,8 @@ def _get_embed_model() -> TextEmbedding:
 class LLMClient:
     def __init__(self):
         self.client        = AsyncGroq(api_key=settings.GROQ_API_KEY)
-        self.model         = settings.GROQ_MODEL
+        self.model         = settings.GROQ_MODEL        # 70b — heavy tasks only
+        self.fast_model    = settings.GROQ_FAST_MODEL   # 8b — classify, extract, detect, summarize
         self.invoice_model = settings.GROQ_INVOICE_MODEL
 
     # ------------------------------------------------------------------ #
@@ -107,6 +108,32 @@ class LLMClient:
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"Groq chat error: {e}")
+            raise LLMError(f"Groq API request failed: {e}")
+
+    # ------------------------------------------------------------------ #
+    # Fast chat — uses 8b model for simple classify/extract/detect tasks  #
+    # ------------------------------------------------------------------ #
+    async def chat_fast(self, prompt: str, system: str = None, json_mode: bool = True) -> str:
+        """Same as chat() but uses GROQ_FAST_MODEL (8b) to save quota."""
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        kwargs = dict(
+            model=self.fast_model,
+            messages=messages,
+            temperature=0.1,
+            max_tokens=1024,
+        )
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+
+        try:
+            response = await self.client.chat.completions.create(**kwargs)
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Groq fast chat error: {e}")
             raise LLMError(f"Groq API request failed: {e}")
 
     # ------------------------------------------------------------------ #
@@ -151,7 +178,7 @@ class LLMClient:
         )
         try:
             response = await self.client.chat.completions.create(
-                model=self.model,
+                model=self.fast_model,   # summarization doesn't need 70b
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=512,
