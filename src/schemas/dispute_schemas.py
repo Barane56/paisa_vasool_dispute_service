@@ -41,7 +41,7 @@ class AIAnalysisResponse(BaseModel):
 
 class DisputeResponse(BaseModel):
     dispute_id: int
-    email_id: int
+    email_id: Optional[int] 
     invoice_id: Optional[int]
     payment_detail_id: Optional[int]
     customer_id: str
