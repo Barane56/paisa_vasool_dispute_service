@@ -58,11 +58,12 @@ class DisputeDetailResponse(DisputeResponse):
     latest_analysis: Optional[AIAnalysisResponse] = None
     open_questions_count: int = 0
     assigned_to: Optional[str] = None
+    has_new_customer_message: bool = False   # True when latest episode is from CUSTOMER
 
 
 class DisputeListResponse(BaseModel):
     total: int
-    items: List[DisputeResponse]
+    items: List[DisputeDetailResponse]
 
 
 class DisputeStatusUpdate(BaseModel):
@@ -85,12 +86,23 @@ class DisputeAssignmentResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class TimelineAttachment(BaseModel):
+    """A single attachment linked to a timeline episode."""
+    attachment_id: int
+    file_name: str
+    file_type: str
+    download_url: str          # ready-to-use URL path for the frontend
+    source: str                # "inbound" | "outbound"
+
+
 class TimelineEpisodeResponse(BaseModel):
     episode_id: int
     actor: str
+    actor_name: Optional[str] = None   # populated for ASSOCIATE episodes (FA real name)
     episode_type: str
     content_text: str
     created_at: datetime
+    attachments: List[TimelineAttachment] = []
     model_config = {"from_attributes": True}
 
 

@@ -12,7 +12,11 @@ from .dispute_models import (
     DisputeAssignment, DisputeOpenQuestion,
     DisputeActivityLog, DisputeStatusHistory,
 )
-from .memory_models  import DisputeMemoryEpisode, DisputeMemorySummary
+from .memory_models   import DisputeMemoryEpisode, DisputeMemorySummary
+from .mailbox_models  import (
+    MailboxCredential, EmailInboxMessage, EmailMessageAttachment,
+    OutboundEmail, OutboundEmailAttachment,
+)
 
 __all__ = [
     "Base",
@@ -24,4 +28,6 @@ __all__ = [
     "DisputeAssignment", "DisputeOpenQuestion",
     "DisputeActivityLog", "DisputeStatusHistory",
     "DisputeMemoryEpisode", "DisputeMemorySummary",
+    "MailboxCredential", "EmailInboxMessage", "EmailMessageAttachment",
+    "OutboundEmail", "OutboundEmailAttachment",
 ]

@@ -141,6 +141,7 @@ async def node_classify_email(
         body_text=state["body_text"],
         attachment_texts=state["attachment_texts"],
         groq_extracted=state.get("groq_extracted"),
+        attachment_metadata=state.get("attachment_metadata"),
     )
 
     langfuse_context.update_current_observation(

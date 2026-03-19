@@ -8,7 +8,7 @@ from typing import List, Dict, Optional
 from poml import poml as render_poml
 
 PROMPT_NAME    = "generate_ar_response"
-PROMPT_VERSION = "3.0"
+PROMPT_VERSION = "3.1"
 _TEMPLATE = str(Path(__file__).parent / "templates" / "generate_response.poml")
 
 
@@ -28,12 +28,10 @@ def build_generate_response_prompt(
     dispute_token: Optional[str] = None,
     inline_issues_summary: str = "",
     inline_issues: Optional[List[Dict]] = None,
-    # When True this call is for one specific issue inside a multi-issue email.
-    # The LLM must respond to THIS issue only and ignore the rest of the email.
     is_focused_issue: bool = False,
     focus_invoice_number: Optional[str] = None,
+    attachment_metadata: Optional[List[Dict]] = None,  # NEW: [{file_name, file_type, extracted_text}]
 ) -> str:
-    # inline_issues_ctx kept for backwards compat but unused in focused mode
     inline_issues_ctx = "None"
     if inline_issues and not is_focused_issue:
         safe_issues = []
@@ -45,6 +43,19 @@ def build_generate_response_prompt(
                 "token_placeholder": f"{{DISPUTE_TOKEN_{idx}}}",
             })
         inline_issues_ctx = json.dumps(safe_issues, indent=2)
+
+    # Build attachment context block
+    att_ctx = "No attachments"
+    if attachment_metadata:
+        parts = []
+        for meta in attachment_metadata:
+            fname     = meta.get("file_name", "attachment")
+            ftype     = meta.get("file_type", "unknown")
+            extracted = meta.get("extracted_text", "")
+            if extracted:
+                parts.append(f"[{fname} ({ftype.upper()})]\n{extracted[:1500]}")
+        if parts:
+            att_ctx = "\n\n---\n\n".join(parts)[:5000]
 
     context = {
         "subject":               subject,
@@ -67,6 +78,7 @@ def build_generate_response_prompt(
         # Focused-issue fields
         "is_focused_issue":      is_focused_issue,
         "focus_invoice_number":  focus_invoice_number or "not specified",
+        "attachment_ctx":        att_ctx,
     }
 
     messages = render_poml(_TEMPLATE, context)

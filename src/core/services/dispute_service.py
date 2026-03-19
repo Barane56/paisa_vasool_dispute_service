@@ -1,7 +1,8 @@
 import logging
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
+from sqlalchemy import select
+from typing import Optional, List
 
 from src.data.repositories.repositories import (
     DisputeRepository, DisputeTypeRepository, DisputeAIAnalysisRepository,
@@ -17,7 +18,7 @@ from src.core.exceptions import (
 )
 from src.schemas.schemas import (
     DisputeStatusUpdate, DisputeAssignRequest, DisputeTimelineResponse,
-    TimelineEpisodeResponse, QuestionStatusUpdate,
+    TimelineEpisodeResponse, TimelineAttachment, QuestionStatusUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -130,13 +131,137 @@ class DisputeService:
         pending_qs = await self.q_repo.get_pending_for_dispute(dispute_id)
         active_assignment = await self.assign_repo.get_active_assignment(dispute_id)
 
+        # ── Fetch attachments for inbound emails ──────────────────────────────
+        # Each CUSTOMER_EMAIL episode has email_id → email_inbox_messages.email_inbox_id
+        # → its attachments in email_message_attachments
+        inbound_email_ids = [
+            ep.email_id for ep in episodes
+            if ep.email_id and ep.actor == "CUSTOMER"
+        ]
+        # Map email_id → list of (attachment_id, file_name, file_type)
+        inbound_att_map: dict = {}
+        if inbound_email_ids:
+            try:
+                from src.data.models.postgres.mailbox_models import (
+                    EmailInboxMessage, EmailMessageAttachment,
+                )
+                result = await self.db.execute(
+                    select(
+                        EmailInboxMessage.email_inbox_id,
+                        EmailMessageAttachment.attachment_id,
+                        EmailMessageAttachment.file_name,
+                        EmailMessageAttachment.file_type,
+                    )
+                    .join(
+                        EmailMessageAttachment,
+                        EmailMessageAttachment.message_id == EmailInboxMessage.message_id,
+                    )
+                    .where(EmailInboxMessage.email_inbox_id.in_(inbound_email_ids))
+                )
+                for row in result.fetchall():
+                    inbound_att_map.setdefault(row.email_inbox_id, []).append(
+                        TimelineAttachment(
+                            attachment_id=row.attachment_id,
+                            file_name=row.file_name,
+                            file_type=row.file_type or "application/octet-stream",
+                            download_url=f"/dispute/api/v1/inbox/attachments/{row.attachment_id}/download",
+                            source="inbound",
+                        )
+                    )
+            except Exception as exc:
+                logger.warning(f"[dispute_id={dispute_id}] Failed to load inbound attachments: {exc}")
+
+        # ── Fetch attachments for outbound emails (AI + Associate replies) ────
+        # OutboundEmail.dispute_id = dispute_id; we match episode ↔ outbound by
+        # closest created_at within a 30-second window.
+        outbound_att_map: dict = {}   # episode_id → list[TimelineAttachment]
+        outbound_episodes = [ep for ep in episodes if ep.actor in ("AI", "ASSOCIATE")]
+        if outbound_episodes:
+            try:
+                from src.data.models.postgres.mailbox_models import (
+                    OutboundEmail, OutboundEmailAttachment,
+                )
+                from sqlalchemy import func as safunc
+                result = await self.db.execute(
+                    select(
+                        OutboundEmail.outbound_id,
+                        OutboundEmail.created_at,
+                        OutboundEmailAttachment.attachment_id,
+                        OutboundEmailAttachment.file_name,
+                        OutboundEmailAttachment.file_type,
+                    )
+                    .join(
+                        OutboundEmailAttachment,
+                        OutboundEmailAttachment.outbound_id == OutboundEmail.outbound_id,
+                    )
+                    .where(OutboundEmail.dispute_id == dispute_id)
+                )
+                outbound_rows = result.fetchall()
+
+                if outbound_rows:
+                    for ep in outbound_episodes:
+                        for row in outbound_rows:
+                            # Match if within 30 seconds of episode creation
+                            diff = abs((row.created_at - ep.created_at).total_seconds())
+                            if diff <= 30:
+                                outbound_att_map.setdefault(ep.episode_id, []).append(
+                                    TimelineAttachment(
+                                        attachment_id=row.attachment_id,
+                                        file_name=row.file_name,
+                                        file_type=row.file_type or "application/octet-stream",
+                                        download_url=f"/dispute/api/v1/outbound/attachments/{row.attachment_id}/download",
+                                        source="outbound",
+                                    )
+                                )
+            except Exception as exc:
+                logger.warning(f"[dispute_id={dispute_id}] Failed to load outbound attachments: {exc}")
+
+        # ── Fetch FA sender names for ASSOCIATE episodes ──────────────────────
+        # Match each ASSOCIATE episode to the OutboundEmail sent within 30s,
+        # then join users to get the real name.
+        episode_actor_name: dict = {}   # episode_id → actor name string
+        associate_episodes = [ep for ep in episodes if ep.actor == "ASSOCIATE"]
+        if associate_episodes:
+            try:
+                from src.data.models.postgres.mailbox_models import OutboundEmail
+                from src.data.models.postgres.user_models import User
+                ob_result = await self.db.execute(
+                    select(
+                        OutboundEmail.outbound_id,
+                        OutboundEmail.created_at,
+                        OutboundEmail.sent_by_user_id,
+                        User.name,
+                    )
+                    .join(User, User.user_id == OutboundEmail.sent_by_user_id)
+                    .where(
+                        OutboundEmail.dispute_id == dispute_id,
+                        OutboundEmail.sent_by_user_id.isnot(None),
+                    )
+                )
+                ob_rows = ob_result.fetchall()
+                for ep in associate_episodes:
+                    for row in ob_rows:
+                        diff = abs((row.created_at - ep.created_at).total_seconds())
+                        if diff <= 30:
+                            episode_actor_name[ep.episode_id] = row.name
+                            break
+            except Exception as exc:
+                logger.warning(f"[dispute_id={dispute_id}] Failed to load FA actor names: {exc}")
+
+        # ── Build timeline ─────────────────────────────────────────────────────
         timeline = [
             TimelineEpisodeResponse(
                 episode_id=ep.episode_id,
                 actor=ep.actor,
+                actor_name=episode_actor_name.get(ep.episode_id),
                 episode_type=ep.episode_type,
                 content_text=ep.content_text,
                 created_at=ep.created_at,
+                attachments=(
+                    inbound_att_map.get(ep.email_id, [])
+                    if ep.actor == "CUSTOMER"
+                    else outbound_att_map.get(ep.episode_id, [])
+                ),
             )
             for ep in episodes
         ]
@@ -201,3 +326,271 @@ class DisputeService:
             question.answered_at = datetime.now(timezone.utc)
         await self.db.commit()
         return question
+
+    async def get_enriched_list(
+        self,
+        status: str | None = None,
+        priority: str | None = None,
+        customer_id: str | None = None,
+        assigned_to: int | None = None,
+        search: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ):
+        """
+        Returns DisputeDetailResponse-ready dicts for all matched disputes
+        in 5 parallel DB queries — no N+1 calls from the route layer.
+        """
+        from sqlalchemy import select as sa_select, and_ as sa_and_, func as sa_func
+        from sqlalchemy.orm import joinedload
+        from src.data.models.postgres.models import (
+            DisputeAIAnalysis, DisputeAssignment, DisputeOpenQuestion,
+        )
+        from src.data.models.postgres.memory_models import DisputeMemoryEpisode
+        from src.schemas.dispute_schemas import AIAnalysisResponse, DisputeDetailResponse
+
+        items, total = await self.list_disputes(
+            status=status, priority=priority, customer_id=customer_id,
+            assigned_to=assigned_to, search=search, limit=limit, offset=offset,
+        )
+        if not items:
+            return [], total
+
+        id_list = [d.dispute_id for d in items]
+
+        # ── Latest analysis per dispute ───────────────────────────────────────
+        max_a_sq = (
+            sa_select(
+                DisputeAIAnalysis.dispute_id,
+                sa_func.max(DisputeAIAnalysis.analysis_id).label("max_id"),
+            )
+            .where(DisputeAIAnalysis.dispute_id.in_(id_list))
+            .group_by(DisputeAIAnalysis.dispute_id)
+            .subquery()
+        )
+        analysis_map = {
+            a.dispute_id: a
+            for a in (await self.db.execute(
+                sa_select(DisputeAIAnalysis).join(max_a_sq, sa_and_(
+                    DisputeAIAnalysis.dispute_id == max_a_sq.c.dispute_id,
+                    DisputeAIAnalysis.analysis_id == max_a_sq.c.max_id,
+                ))
+            )).scalars().all()
+        }
+
+        # ── Active assignment per dispute ─────────────────────────────────────
+        assign_rows = (await self.db.execute(
+            sa_select(DisputeAssignment)
+            .options(joinedload(DisputeAssignment.assignee))
+            .where(sa_and_(
+                DisputeAssignment.dispute_id.in_(id_list),
+                DisputeAssignment.status == "ACTIVE",
+            ))
+            .order_by(DisputeAssignment.assigned_at.desc())
+        )).scalars().all()
+        assign_map: dict = {}
+        for a in assign_rows:
+            if a.dispute_id not in assign_map:
+                assign_map[a.dispute_id] = a
+
+        # ── Pending question count per dispute ────────────────────────────────
+        q_count_map = {
+            row.dispute_id: row.cnt
+            for row in (await self.db.execute(
+                sa_select(
+                    DisputeOpenQuestion.dispute_id,
+                    sa_func.count(DisputeOpenQuestion.question_id).label("cnt"),
+                )
+                .where(sa_and_(
+                    DisputeOpenQuestion.dispute_id.in_(id_list),
+                    DisputeOpenQuestion.status == "PENDING",
+                ))
+                .group_by(DisputeOpenQuestion.dispute_id)
+            )).all()
+        }
+
+        # ── Latest episode actor per dispute ──────────────────────────────────
+        max_ep_sq = (
+            sa_select(
+                DisputeMemoryEpisode.dispute_id,
+                sa_func.max(DisputeMemoryEpisode.episode_id).label("max_ep_id"),
+            )
+            .where(DisputeMemoryEpisode.dispute_id.in_(id_list))
+            .group_by(DisputeMemoryEpisode.dispute_id)
+            .subquery()
+        )
+        ep_actor_map = {
+            row.dispute_id: row.actor
+            for row in (await self.db.execute(
+                sa_select(DisputeMemoryEpisode.dispute_id, DisputeMemoryEpisode.actor)
+                .join(max_ep_sq, sa_and_(
+                    DisputeMemoryEpisode.dispute_id == max_ep_sq.c.dispute_id,
+                    DisputeMemoryEpisode.episode_id == max_ep_sq.c.max_ep_id,
+                ))
+            )).all()
+        }
+
+        # ── Assemble ──────────────────────────────────────────────────────────
+        enriched = []
+        for d in items:
+            raw_a = analysis_map.get(d.dispute_id)
+            latest_analysis = None
+            if raw_a:
+                try:
+                    latest_analysis = AIAnalysisResponse.model_validate(raw_a)
+                except Exception:
+                    pass
+            active_assign = assign_map.get(d.dispute_id)
+            enriched.append(DisputeDetailResponse(
+                dispute_id=d.dispute_id,
+                email_id=d.email_id,
+                invoice_id=d.invoice_id,
+                payment_detail_id=d.payment_detail_id,
+                customer_id=d.customer_id,
+                dispute_type=d.dispute_type,
+                status=d.status,
+                priority=d.priority,
+                description=d.description,
+                created_at=d.created_at,
+                updated_at=d.updated_at,
+                latest_analysis=latest_analysis,
+                open_questions_count=q_count_map.get(d.dispute_id, 0),
+                assigned_to=active_assign.assignee.email if active_assign else None,
+                has_new_customer_message=(ep_actor_map.get(d.dispute_id) == "CUSTOMER"),
+            ))
+        return enriched, total
+
+    async def get_enriched_detail(self, dispute_id: int):
+        """
+        Returns a single DisputeDetailResponse with analysis, assignment,
+        open question count and new-message flag — all from the service layer.
+        """
+        from src.schemas.dispute_schemas import AIAnalysisResponse, DisputeDetailResponse
+
+        dispute = await self.get_dispute(dispute_id)
+
+        latest_analysis = None
+        try:
+            raw = await self.analysis_repo.get_latest_for_dispute(dispute_id)
+            if raw:
+                latest_analysis = AIAnalysisResponse.model_validate(raw)
+        except Exception:
+            pass
+
+        pending_qs    = await self.q_repo.get_all_for_dispute(dispute_id)
+        active_assign = await self.assign_repo.get_active_assignment(dispute_id)
+
+        has_new = False
+        try:
+            latest_eps = await self.ep_repo.get_latest_n(dispute_id, n=1)
+            has_new = bool(latest_eps and latest_eps[0].actor == "CUSTOMER")
+        except Exception:
+            pass
+
+        return DisputeDetailResponse(
+            dispute_id=dispute.dispute_id,
+            email_id=dispute.email_id,
+            invoice_id=dispute.invoice_id,
+            payment_detail_id=dispute.payment_detail_id,
+            customer_id=dispute.customer_id,
+            dispute_type=dispute.dispute_type,
+            status=dispute.status,
+            priority=dispute.priority,
+            description=dispute.description,
+            created_at=dispute.created_at,
+            updated_at=dispute.updated_at,
+            latest_analysis=latest_analysis,
+            open_questions_count=len([q for q in pending_qs if q.status == "PENDING"]),
+            assigned_to=active_assign.assignee.email if active_assign else None,
+            has_new_customer_message=has_new,
+        )
+
+    async def get_bulk_enriched(self, id_list: list[int]):
+        """
+        Fetch enriched detail for an explicit list of dispute IDs in one round-trip.
+        Used by the bulk-detail endpoint.
+        """
+        from sqlalchemy import select as sa_select, and_ as sa_and_, func as sa_func
+        from sqlalchemy.orm import joinedload, selectinload
+        from src.data.models.postgres.models import (
+            DisputeAIAnalysis, DisputeAssignment, DisputeOpenQuestion, DisputeMaster,
+        )
+        from src.data.models.postgres.memory_models import DisputeMemoryEpisode
+        from src.schemas.dispute_schemas import AIAnalysisResponse, DisputeDetailResponse
+
+        if not id_list:
+            return []
+
+        # Fetch disputes by explicit id_list
+        disputes = list((await self.db.execute(
+            sa_select(DisputeMaster)
+            .options(selectinload(DisputeMaster.dispute_type))
+            .where(DisputeMaster.dispute_id.in_(id_list))
+            .order_by(DisputeMaster.created_at.desc())
+        )).scalars().all())
+
+        if not disputes:
+            return []
+
+        ids = [d.dispute_id for d in disputes]
+
+        max_a_sq = (
+            sa_select(DisputeAIAnalysis.dispute_id, sa_func.max(DisputeAIAnalysis.analysis_id).label("max_id"))
+            .where(DisputeAIAnalysis.dispute_id.in_(ids)).group_by(DisputeAIAnalysis.dispute_id).subquery()
+        )
+        analysis_map = {a.dispute_id: a for a in (await self.db.execute(
+            sa_select(DisputeAIAnalysis).join(max_a_sq, sa_and_(
+                DisputeAIAnalysis.dispute_id == max_a_sq.c.dispute_id,
+                DisputeAIAnalysis.analysis_id == max_a_sq.c.max_id,
+            ))
+        )).scalars().all()}
+
+        assign_rows = (await self.db.execute(
+            sa_select(DisputeAssignment).options(joinedload(DisputeAssignment.assignee))
+            .where(sa_and_(DisputeAssignment.dispute_id.in_(ids), DisputeAssignment.status == "ACTIVE"))
+            .order_by(DisputeAssignment.assigned_at.desc())
+        )).scalars().all()
+        assign_map: dict = {}
+        for a in assign_rows:
+            if a.dispute_id not in assign_map:
+                assign_map[a.dispute_id] = a
+
+        q_count_map = {row.dispute_id: row.cnt for row in (await self.db.execute(
+            sa_select(DisputeOpenQuestion.dispute_id, sa_func.count(DisputeOpenQuestion.question_id).label("cnt"))
+            .where(sa_and_(DisputeOpenQuestion.dispute_id.in_(ids), DisputeOpenQuestion.status == "PENDING"))
+            .group_by(DisputeOpenQuestion.dispute_id)
+        )).all()}
+
+        max_ep_sq = (
+            sa_select(DisputeMemoryEpisode.dispute_id, sa_func.max(DisputeMemoryEpisode.episode_id).label("max_ep_id"))
+            .where(DisputeMemoryEpisode.dispute_id.in_(ids)).group_by(DisputeMemoryEpisode.dispute_id).subquery()
+        )
+        ep_actor_map = {row.dispute_id: row.actor for row in (await self.db.execute(
+            sa_select(DisputeMemoryEpisode.dispute_id, DisputeMemoryEpisode.actor)
+            .join(max_ep_sq, sa_and_(
+                DisputeMemoryEpisode.dispute_id == max_ep_sq.c.dispute_id,
+                DisputeMemoryEpisode.episode_id == max_ep_sq.c.max_ep_id,
+            ))
+        )).all()}
+
+        results = []
+        for d in disputes:
+            raw_a = analysis_map.get(d.dispute_id)
+            latest_analysis = None
+            if raw_a:
+                try:
+                    latest_analysis = AIAnalysisResponse.model_validate(raw_a)
+                except Exception:
+                    pass
+            active_assign = assign_map.get(d.dispute_id)
+            results.append(DisputeDetailResponse(
+                dispute_id=d.dispute_id, email_id=d.email_id, invoice_id=d.invoice_id,
+                payment_detail_id=d.payment_detail_id, customer_id=d.customer_id,
+                dispute_type=d.dispute_type, status=d.status, priority=d.priority,
+                description=d.description, created_at=d.created_at, updated_at=d.updated_at,
+                latest_analysis=latest_analysis,
+                open_questions_count=q_count_map.get(d.dispute_id, 0),
+                assigned_to=active_assign.assignee.email if active_assign else None,
+                has_new_customer_message=(ep_actor_map.get(d.dispute_id) == "CUSTOMER"),
+            ))
+        return results

@@ -106,8 +106,8 @@ class LLMClient:
     # Invoice data extraction                                             #
     # ------------------------------------------------------------------ #
     @observe(name="llm_extract_invoice_data")
-    async def extract_invoice_data(self, raw_text: str) -> dict:
-        prompt = build_extract_invoice_prompt(raw_text)
+    async def extract_invoice_data(self, raw_text: str, attachment_metadata: list = None) -> dict:
+        prompt = build_extract_invoice_prompt(raw_text, attachment_metadata=attachment_metadata)
         langfuse_context.update_current_observation(
             input={"prompt": prompt},
             metadata={"prompt_name": EXTRACT_PROMPT_NAME, "prompt_version": EXTRACT_PROMPT_VERSION},

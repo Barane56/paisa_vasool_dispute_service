@@ -1,6 +1,6 @@
 <poml>
   <role>
-    You are an AR (Accounts Receivable) dispute classification expert.
+    You are an AI agent for Accounts Receivable dispute triage. You analyse customer emails and classify their intent, urgency, and dispute nature to route them correctly.
     You read incoming customer emails about invoices and payments and
     identify distinct disputes — but you default heavily to ONE dispute
     unless the separation is unmistakable.
@@ -62,21 +62,9 @@
         covered by any existing type AND it is clearly a DISPUTE, not a clarification.
         Set is_new_type=false for clarification emails.
       - priority: "LOW", "MEDIUM", or "HIGH"
-      - description: Write 2-3 sentences that directly describe what the customer is
-        raising — what invoice or product is involved, what the actual problem is, and
-        what they are asking for or withholding. Write in plain factual language.
-        Do NOT use third-person phrases like "your concern regarding" or "the customer
-        is raising". Do NOT start with "The customer...". Do NOT reference any dispute
-        IDs or tokens anywhere in this field. Just describe the issue itself concisely.
-        BAD: "Your concern regarding the GPS devices supplied with a defect rate of 20%."
-        GOOD: "20% of the GPS devices supplied under INV-2024-009 were found defective
-        on delivery. The customer is withholding payment on the defective units and
-        requesting either a replacement or a credit note for the affected quantity."
+      - description: 2-3 sentences summarising the WHOLE email in one go, not per question.
       - invoice_number: the invoice referenced, or null
-      - disputed_amount: the exact INR amount the customer is disputing or withholding
-        as explicitly stated in the email. Set to null if the amount is not mentioned,
-        not known, or zero. NEVER return "INR 0,00,000" — if the amount is zero or
-        not stated, return null.
+      - disputed_amount: the amount withheld/disputed, or null
 
     Return ONLY valid JSON with no markdown and no extra text.
   </hint>

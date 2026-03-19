@@ -84,13 +84,15 @@ def build_email_processing_graph(db_session=None, llm_client=None):
 
 @observe(name="run_email_processing")
 async def run_email_processing(
-    email_id:         int,
-    sender_email:     str,
-    subject:          str,
-    body_text:        str,
-    attachment_texts: List[str],
+    email_id:            int,
+    sender_email:        str,
+    subject:             str,
+    body_text:           str,
+    attachment_texts:    List[str],
     db_session=None,
     llm_client=None,
+    attachment_metadata: List[dict] = None,
+    existing_dispute_id: int = None,
 ) -> EmailProcessingState:
     langfuse_context.update_current_trace(
         name=f"email_processing:{email_id}",
@@ -100,7 +102,11 @@ async def run_email_processing(
     )
 
     graph         = build_email_processing_graph(db_session=db_session, llm_client=llm_client)
-    initial_state = build_initial_state(email_id, sender_email, subject, body_text, attachment_texts)
+    initial_state = build_initial_state(
+        email_id, sender_email, subject, body_text, attachment_texts,
+        attachment_metadata=attachment_metadata or [],
+        existing_dispute_id=existing_dispute_id,
+    )
     result        = await graph.ainvoke(initial_state)
 
     langfuse_context.update_current_trace(

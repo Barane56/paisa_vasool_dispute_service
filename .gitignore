@@ -5,3 +5,7 @@ node_modules/
 __pycache__/
 *.pyc
 sample_emails/
+celerybeat*
+__pycache__
+sample_emails
+__pycache__

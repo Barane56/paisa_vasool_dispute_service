@@ -15,9 +15,9 @@ venv/
 env/
 
 # Environment files — never bake secrets into the image
-.env
-.env.*
-!.env.example
+# .env
+# .env.*
+# !.env.example
 
 # Development / editor
 .git/

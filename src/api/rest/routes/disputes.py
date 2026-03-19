@@ -1,3 +1,9 @@
+"""
+src/api/rest/routes/disputes.py
+================================
+Thin route layer — all business/query logic lives in DisputeService.
+Routes only handle HTTP concerns: extract params, call service, return response.
+"""
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
@@ -27,18 +33,24 @@ async def list_disputes(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """List all disputes with optional filters."""
+    """List disputes with filters. Returns enriched items in a single request."""
     service = DisputeService(db)
-    items, total = await service.list_disputes(
-        status=status,
-        priority=priority,
-        customer_id=customer_id,
-        assigned_to=assigned_to,
-        search=search,
-        limit=limit,
-        offset=offset,
+    enriched, total = await service.get_enriched_list(
+        status=status, priority=priority, customer_id=customer_id,
+        assigned_to=assigned_to, search=search, limit=limit, offset=offset,
     )
-    return DisputeListResponse(total=total, items=items)
+    return DisputeListResponse(total=total, items=enriched)
+
+
+@router.get("/bulk-detail", response_model=List[DisputeDetailResponse])
+async def bulk_get_dispute_detail(
+    ids: str = Query(..., description="Comma-separated dispute_ids e.g. ?ids=1,2,3"),
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Fetch enriched detail for multiple disputes in one request."""
+    id_list = [int(x.strip()) for x in ids.split(",") if x.strip().isdigit()]
+    return await DisputeService(db).get_bulk_enriched(id_list)
 
 
 @router.get("/my", response_model=DisputeListResponse)
@@ -48,10 +60,12 @@ async def get_my_disputes(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Get all disputes currently assigned to the logged-in associate."""
+    """Get all disputes assigned to the logged-in associate."""
     service = DisputeService(db)
-    items, total = await service.get_my_disputes(current_user.user_id, limit, offset)
-    return DisputeListResponse(total=total, items=items)
+    enriched, total = await service.get_enriched_list(
+        assigned_to=current_user.user_id, limit=limit, offset=offset,
+    )
+    return DisputeListResponse(total=total, items=enriched)
 
 
 @router.get("/{dispute_id}", response_model=DisputeDetailResponse)
@@ -60,35 +74,8 @@ async def get_dispute(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Get full detail of a dispute including latest analysis and open question count."""
-    service = DisputeService(db)
-    dispute = await service.get_dispute(dispute_id)
-
-    latest_analysis = None
-    try:
-        latest_analysis = await service.get_analysis(dispute_id)
-    except Exception:
-        pass
-
-    pending_qs = await service.get_open_questions(dispute_id)
-    active_assign = await service.assign_repo.get_active_assignment(dispute_id)
-
-    return DisputeDetailResponse(
-        dispute_id=dispute.dispute_id,
-        email_id=dispute.email_id,
-        invoice_id=dispute.invoice_id,
-        payment_detail_id=dispute.payment_detail_id,
-        customer_id=dispute.customer_id,
-        dispute_type=dispute.dispute_type,
-        status=dispute.status,
-        priority=dispute.priority,
-        description=dispute.description,
-        created_at=dispute.created_at,
-        updated_at=dispute.updated_at,
-        latest_analysis=latest_analysis,
-        open_questions_count=len([q for q in pending_qs if q.status == "PENDING"]),
-        assigned_to=active_assign.assignee.email if active_assign else None,
-    )
+    """Get full detail of a dispute."""
+    return await DisputeService(db).get_enriched_detail(dispute_id)
 
 
 @router.patch("/{dispute_id}/status", response_model=SuccessResponse)
@@ -98,9 +85,8 @@ async def update_dispute_status(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Update the status of a dispute. Triggers open question expiry on RESOLVED/CLOSED."""
-    service = DisputeService(db)
-    await service.update_status(dispute_id, data, current_user.user_id)
+    """Update the status of a dispute."""
+    await DisputeService(db).update_status(dispute_id, data, current_user.user_id)
     return SuccessResponse(message=f"Dispute {dispute_id} status updated to {data.status}")
 
 
@@ -112,8 +98,7 @@ async def assign_dispute(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Assign or reassign a dispute to a finance associate."""
-    service = DisputeService(db)
-    assignment, user = await service.assign_dispute(dispute_id, data, current_user.user_id)
+    assignment, user = await DisputeService(db).assign_dispute(dispute_id, data, current_user.user_id)
     return SuccessResponse(
         message=f"Dispute {dispute_id} assigned to {user.name}",
         data={"assignment_id": assignment.assignment_id, "assigned_to": user.email},
@@ -126,13 +111,8 @@ async def get_dispute_timeline(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """
-    Full chronological timeline — all memory episodes (customer emails,
-    AI responses, associate replies), pending question count, and assignee.
-    Primary endpoint for finance associates to review a dispute.
-    """
-    service = DisputeService(db)
-    return await service.get_timeline(dispute_id)
+    """Full chronological timeline — episodes, pending questions, assignee."""
+    return await DisputeService(db).get_timeline(dispute_id)
 
 
 @router.get("/{dispute_id}/analysis", response_model=AIAnalysisResponse)
@@ -141,9 +121,8 @@ async def get_dispute_analysis(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Get the latest Groq AI analysis for a dispute."""
-    service = DisputeService(db)
-    return await service.get_analysis(dispute_id)
+    """Get the latest AI analysis for a dispute."""
+    return await DisputeService(db).get_analysis(dispute_id)
 
 
 @router.post("/{dispute_id}/reanalyze", response_model=TaskResponse)
@@ -152,13 +131,10 @@ async def reanalyze_dispute(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Trigger re-analysis of a dispute via Groq (e.g. after new info is available)."""
-    service = DisputeService(db)
-    task_id = await service.reanalyze(dispute_id)
+    """Trigger re-analysis of a dispute."""
+    task_id = await DisputeService(db).reanalyze(dispute_id)
     return TaskResponse(task_id=task_id, status="QUEUED", message="Re-analysis queued")
 
-
-# ── Memory endpoints ──────────────────────────────────────────────────────────
 
 @router.get("/{dispute_id}/episodes", response_model=List[TimelineEpisodeResponse])
 async def get_dispute_episodes(
@@ -166,15 +142,12 @@ async def get_dispute_episodes(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Get all memory episodes for a dispute in chronological order."""
-    service = DisputeService(db)
-    episodes = await service.get_episodes(dispute_id)
+    """Get all memory episodes in chronological order."""
+    episodes = await DisputeService(db).get_episodes(dispute_id)
     return [
         TimelineEpisodeResponse(
-            episode_id=ep.episode_id,
-            actor=ep.actor,
-            episode_type=ep.episode_type,
-            content_text=ep.content_text,
+            episode_id=ep.episode_id, actor=ep.actor,
+            episode_type=ep.episode_type, content_text=ep.content_text,
             created_at=ep.created_at,
         )
         for ep in episodes
@@ -187,9 +160,8 @@ async def get_dispute_summary(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Get the current Groq-generated rolling memory summary for a dispute."""
-    service = DisputeService(db)
-    return await service.get_summary(dispute_id)
+    """Get the rolling memory summary for a dispute."""
+    return await DisputeService(db).get_summary(dispute_id)
 
 
 @router.get("/{dispute_id}/open-questions", response_model=List[OpenQuestionResponse])
@@ -198,16 +170,12 @@ async def get_open_questions(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """Get all questions asked to the customer with their current answer status."""
-    service = DisputeService(db)
-    questions = await service.get_open_questions(dispute_id)
+    """Get all questions asked to the customer."""
+    questions = await DisputeService(db).get_open_questions(dispute_id)
     return [
         OpenQuestionResponse(
-            question_id=q.question_id,
-            question_text=q.question_text,
-            status=q.status,
-            asked_at=q.created_at,
-            answered_at=q.answered_at,
+            question_id=q.question_id, question_text=q.question_text,
+            status=q.status, asked_at=q.created_at, answered_at=q.answered_at,
         )
         for q in questions
     ]
@@ -222,6 +190,5 @@ async def update_question_status(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Manually mark a pending question as ANSWERED or EXPIRED."""
-    service = DisputeService(db)
-    await service.update_question_status(dispute_id, question_id, data, current_user.user_id)
+    await DisputeService(db).update_question_status(dispute_id, question_id, data, current_user.user_id)
     return SuccessResponse(message=f"Question {question_id} marked as {data.status}")

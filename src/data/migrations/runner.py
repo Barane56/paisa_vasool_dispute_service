@@ -21,7 +21,7 @@ from pathlib import Path
 
 import asyncpg
 
-from src.config import get_settings
+from src.config.settings import get_settings
 
 logger   = logging.getLogger(__name__)
 settings = get_settings()

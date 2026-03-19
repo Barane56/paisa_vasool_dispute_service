@@ -88,6 +88,14 @@ def create_app() -> FastAPI:
     from src.api.rest.routes.dispute_types import router as dtype_router
     from src.api.rest.routes.supporting_docs import router as supporting_docs_router
 
+    from src.api.rest.routes.mailboxes import (
+        router as mailbox_router,
+        inbox_router,
+        send_router,
+        outbox_router,
+    )
+    from src.api.rest.routes.gcs_test import router as gcs_test_router
+
     app.include_router(health_router)
     app.include_router(email_router,           prefix="/api/v1")
     app.include_router(dispute_router,         prefix="/api/v1")
@@ -95,5 +103,11 @@ def create_app() -> FastAPI:
     app.include_router(invoice_router,         prefix="/api/v1")
     app.include_router(payment_router,         prefix="/api/v1")
     app.include_router(dtype_router,           prefix="/api/v1")
+    app.include_router(mailbox_router,         prefix="/api/v1")
+    app.include_router(inbox_router,           prefix="/api/v1")
+    app.include_router(send_router,            prefix="/api/v1")
+    app.include_router(outbox_router,          prefix="/api/v1")
+    # ── Open test endpoints — NO AUTH — remove before production ─────────────
+    app.include_router(gcs_test_router,        prefix="/api/v1")
 
     return app
