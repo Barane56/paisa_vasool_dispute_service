@@ -38,6 +38,7 @@ Full persist sequence per email
 """
 
 from __future__ import annotations
+import re
 
 import logging
 from datetime import datetime, timezone
@@ -113,7 +114,7 @@ async def _create_dispute(
     db_session.add(dispute)
     await db_session.flush()
 
-    dispute.dispute_token = f"DISP-{dispute.dispute_id:05d}"
+    dispute.dispute_token = f"PV-{dispute.dispute_id:05d}"
     await db_session.flush()
 
     logger.info(
@@ -306,7 +307,7 @@ async def _persist_inline_disputes(
             dispute_id=primary_dispute_id,
             action_type="INLINE_DISPUTE_CREATED",
             notes=(
-                f"Additional issue logged as DISP-{inline_id:05d}: "
+                f"Additional issue logged as PV-{inline_id:05d}: "
                 f"{issue_type_label} — {description[:150]}"
             ),
         ))
@@ -314,7 +315,7 @@ async def _persist_inline_disputes(
             dispute_id=inline_id,
             action_type="CREATED_FROM_MULTI_ISSUE_EMAIL",
             notes=(
-                f"Created alongside primary dispute DISP-{primary_dispute_id:05d} "
+                f"Created alongside primary dispute PV-{primary_dispute_id:05d} "
                 f"from the same customer email (email_id={email_id}). "
                 f"Issue type: {issue_type_label}."
             ),
@@ -402,7 +403,7 @@ async def _persist_forked_disputes(
             dispute_id=parent_dispute_id,
             action_type="CONTEXT_SHIFT_FORK",
             notes=(
-                f"New dispute DISP-{fork_dispute.dispute_id:05d} forked. "
+                f"New dispute PV-{fork_dispute.dispute_id:05d} forked. "
                 f"Reason: {issue.get('context_note') or 'Context shift detected by AI.'}"
             ),
         ))
@@ -410,7 +411,7 @@ async def _persist_forked_disputes(
             dispute_id=fork_dispute.dispute_id,
             action_type="FORKED_FROM_DISPUTE",
             notes=(
-                f"Forked from DISP-{parent_dispute_id:05d}. "
+                f"Forked from PV-{parent_dispute_id:05d}. "
                 f"Reason: {issue.get('context_note') or 'Context shift detected by AI.'}"
             ),
         ))
@@ -519,8 +520,18 @@ async def _send_auto_response_email(
             _clean_subject = f"Re: {_clean_subject}"
         reply_subject = _clean_subject
 
+        # Strip footer lines that contain an unresolved token or DISP-0
+        # (happens when dispute creation is skipped for factual auto-responses)
+        cleaned_response = re.sub(
+            r"Your (?:dispute|case) reference: (?:\{DISPUTE_TOKEN(?:_\d+)?\}|(?:DISP|PV)-0+)[\s\S]*?Do Not Reply to this email\. This is an Auto Generated Response\.",
+            "",
+            ai_response,
+            flags=re.IGNORECASE,
+        ).strip()
+
         # Convert the plain-text ai_response to minimal HTML
-        body_html = "<p>" + ai_response.replace("\n", "<br/>") + "</p>"
+        body_html = "<p>" + cleaned_response.replace("\n", "<br/>") + "</p>"
+        ai_response = cleaned_response
 
         svc = OutboundEmailService(db_session)
         await svc.compose_and_send(
@@ -648,7 +659,11 @@ async def node_persist_results(
                 f"inline_issues={len(state.get('inline_issues') or [])}"
             )
         else:
-            dispute_token = f"DISP-{dispute_id:05d}"
+            # Guard: dispute_id must be a real positive integer
+            dispute_token = (
+                f"PV-{dispute_id:05d}" if (dispute_id and int(dispute_id) > 0)
+                else "{DISPUTE_TOKEN}"
+            )
 
             # Resolve {DISPUTE_TOKEN} in follow-up emails — the new dispute (step 2)
             # is skipped here but the LLM still wrote the placeholder. Replace it now.
@@ -794,7 +809,7 @@ async def node_persist_results(
             for seq_idx, iid in enumerate(inline_dispute_ids, 2):
                 issue_idx = seq_idx - 1          # issue_index in per_issue_responses
                 pir       = pir_by_index.get(issue_idx)
-                token_str = f"DISP-{iid:05d}"
+                token_str = f"PV-{iid:05d}"
 
                 if pir:
                     # Resolve {DISPUTE_TOKEN_N} AND any stray bare {DISPUTE_TOKEN}
@@ -932,7 +947,7 @@ async def node_persist_results(
             for _fork_id in forked_ids:
                 try:
                     _fork_dispute = await _fork_svc.disp_repo.get_by_id(_fork_id)
-                    _fork_token   = getattr(_fork_dispute, "dispute_token", f"DISP-{_fork_id:05d}")
+                    _fork_token   = getattr(_fork_dispute, "dispute_token", f"PV-{_fork_id:05d}")
                     _fork_type    = state.get("dispute_type_name") or "Payment Dispute"
                     _fork_subject = f"[{_fork_token}] {_fork_type}"
                     _fork_body    = (
@@ -1076,7 +1091,7 @@ async def node_persist_results(
                 pir       = pir_by_index_local.get(issue_idx)
                 if not pir:
                     continue
-                token_str     = f"DISP-{iid:05d}"
+                token_str     = f"PV-{iid:05d}"
                 resolved_resp = (
                     pir["ai_response"]
                     .replace(f"{{DISPUTE_TOKEN_{seq_idx}}}", token_str)

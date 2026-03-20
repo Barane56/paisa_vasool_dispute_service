@@ -379,9 +379,14 @@ class DisputeService:
             priority=priority,
             description=description,
             source="FA_MANUAL",
-            dispute_token=f"DISP-FA-{uuid.uuid4().hex[:8].upper()}",
+            dispute_token=None,   # assigned after flush once dispute_id is known
         )
         self.db.add(dispute)
+        await self.db.flush()
+
+        # Assign sequential PV- token now that dispute_id is known —
+        # same format as agent-created disputes, source is never exposed in the token
+        dispute.dispute_token = f"PV-{dispute.dispute_id:05d}"
         await self.db.flush()
 
         # ── Auto-assign to creating FA ────────────────────────────────────────

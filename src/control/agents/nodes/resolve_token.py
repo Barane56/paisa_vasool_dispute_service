@@ -21,14 +21,18 @@ from src.control.agents.state import EmailProcessingState
 
 logger = logging.getLogger(__name__)
 
-# Matches DISP-12345 anywhere in text (case-insensitive)
-_TOKEN_RE = re.compile(r"\bDISP-(\d+)\b", re.IGNORECASE)
+# Matches PV-12345 or DISP-12345 anywhere in text (case-insensitive)
+# PV- is the new format; DISP- kept for backward compat with old emails
+_TOKEN_RE = re.compile(r"\b(?:PV|DISP)-(\d+)\b", re.IGNORECASE)
 
 
 def _extract_token(text: str) -> str | None:
     """Return the first DISP-XXXXX token found in *text*, or None."""
     m = _TOKEN_RE.search(text)
-    return m.group(0).upper() if m else None
+    # Normalise to PV- format regardless of which prefix the customer quoted
+    raw = m.group(0).upper()
+    digits = m.group(1)
+    return f"PV-{digits}" if m else None
 
 
 @observe(name="node_resolve_token")
@@ -56,7 +60,7 @@ async def node_resolve_token(
         return {**state, "token_matched_dispute_id": None}
 
     logger.info(
-        f"[email_id={state['email_id']}] resolve_token: found token={token}"
+        f"[email_id={state['email_id']}] resolve_token: found token={token} (PV- format)"
     )
 
     if not db_session:

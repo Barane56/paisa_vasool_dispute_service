@@ -46,11 +46,11 @@ def _sanitise_dispute_token(ai_response: str, expected_token: str) -> str:
     Replace any LLM-hallucinated dispute reference IDs with the correct placeholder.
 
     Catches all known hallucination patterns:
-      DISP-00001        (our real format)
+      PV-00001          (our real format)
       DISPUTE-2025-001  (LLM makes up year-based references)
       DISPUTE-001       (LLM shortens it)
       REF-2025-001      (LLM uses REF prefix)
-      DISP-2025-001     (LLM mixes formats)
+      PV-2025-001       (LLM mixes formats)
     """
     if expected_token != "{DISPUTE_TOKEN}":
         return ai_response
@@ -58,7 +58,7 @@ def _sanitise_dispute_token(ai_response: str, expected_token: str) -> str:
     # Broad pattern: any word starting with DISP or DISPUTE or REF followed by
     # digits and hyphens — covers all known hallucination styles
     sanitised = re.sub(
-        r'\b(?:DISPUTE|DISP|REF)[-_](?:\d{4}[-_])?\d{1,6}\b',
+        r'\b(?:DISPUTE|DISP|PV|REF)[-_](?:\d{4}[-_])?\d{1,6}\b',
         "{DISPUTE_TOKEN}",
         ai_response,
         flags=re.IGNORECASE,
@@ -212,7 +212,7 @@ async def _call_llm_for_issue(
                 f"Dear Customer,\n\n"
                 f"Thank you for reaching out. We have logged your query and our "
                 f"Finance team will follow up within 1-2 business days.\n\n"
-                f"Your reference: {dispute_token}\n\n"
+                f"Your case reference: {dispute_token}\n\n"
                 f"Please quote this in all future correspondence.\n\n"
                 f"Regards,\nAccounts Receivable Team"
             ),
@@ -299,7 +299,7 @@ async def node_generate_ai_response(
 
     existing_dispute_id = state.get("existing_dispute_id")
     dispute_token       = (
-        f"DISP-{existing_dispute_id:05d}" if existing_dispute_id else "{DISPUTE_TOKEN}"
+        f"PV-{existing_dispute_id:05d}" if existing_dispute_id else "{DISPUTE_TOKEN}"
     )
 
     # ── Single-issue path ─────────────────────────────────────────────────────
@@ -382,7 +382,7 @@ async def node_generate_ai_response(
             fallback_payment_details=state.get("all_payment_details") or [],
         )
 
-        # print(inv_ctx, pay_ctx)
+        print(inv_ctx, pay_ctx)
 
         result = await _call_llm_for_issue(
             llm_client=llm_client,

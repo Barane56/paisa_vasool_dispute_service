@@ -49,7 +49,27 @@ class DisputeRepository(BaseRepository[DisputeMaster]):
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
     async def get_by_dispute_token(self, token: str) -> Optional[DisputeMaster]:
-        result = await self.db.execute(select(DisputeMaster).where(DisputeMaster.dispute_token == token))
+        """
+        Lookup by token. Handles both PV- (new) and DISP- (legacy) formats.
+        If a PV-XXXXX token is not found, also tries DISP-XXXXX for backward compat
+        with customers who reply quoting an old email reference.
+        """
+        result = await self.db.execute(
+            select(DisputeMaster).where(DisputeMaster.dispute_token == token)
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            return row
+        # Backward compat: try the other prefix
+        if token.upper().startswith("PV-"):
+            legacy = "DISP-" + token[3:]
+        elif token.upper().startswith("DISP-"):
+            legacy = "PV-" + token[5:]
+        else:
+            return None
+        result = await self.db.execute(
+            select(DisputeMaster).where(DisputeMaster.dispute_token == legacy)
+        )
         return result.scalar_one_or_none()
 
     async def get_filtered(
