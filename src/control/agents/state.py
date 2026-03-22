@@ -45,6 +45,22 @@ class EmailProcessingState(TypedDict):
     _answers_pending_questions: List[int]
     _new_dispute_type:          Optional[Dict]
 
+    # ── Intent taxonomy (set by classify_email, drives pipeline decisions) ────
+    # 19 possible values:
+    #   Billing:    FACTUAL_QUERY, DISPUTE, DEDUCTION_CLAIM, CREDIT_REQUEST,
+    #               PAYMENT_ADVICE, PAYMENT_DELAY_REQUEST, DOCUMENT_REQUEST,
+    #               INVOICE_CORRECTION_REQUEST
+    #   Escalation: ESCALATION, LEGAL_THREAT
+    #   Relation:   SOCIAL, RESOLUTION_ACK, ABUSIVE, IRRELEVANT,
+    #               DUPLICATE_CONTACT, MULTI_INTENT
+    #   India AR:   GST_QUERY, TDS_DEDUCTION, ADVANCE_PAYMENT
+    intent:               str          # primary intent of this email
+    requires_new_case:    bool         # should persist_results create a new case?
+    requires_fork:        bool         # should detect_context_shift consider forking?
+    escalate_immediately: bool         # notify FA immediately regardless of queue
+    priority_override:    Optional[str]  # force HIGH/MEDIUM/LOW
+    suggested_action:     str          # CLOSE_CASE | UPDATE_CASE | CREATE_CASE | ACKNOWLEDGE_ONLY
+
     # Additional issues found in the SAME email — each becomes its own dispute.
     # Shape per item: {classification, dispute_type_name, is_new_type,
     #   new_type_description, new_type_severity, priority, description,
@@ -137,6 +153,12 @@ def build_initial_state(
         "_answers_pending_questions":  [],
         "_new_dispute_type":           None,
         "inline_issues":               [],
+        "intent":                      "UNKNOWN",
+        "requires_new_case":           True,
+        "requires_fork":               False,
+        "escalate_immediately":        False,
+        "priority_override":           None,
+        "suggested_action":            "CREATE_CASE",
         "invoice_details":             None,
         "all_payment_details":         [],
         "existing_dispute_id":         existing_dispute_id,

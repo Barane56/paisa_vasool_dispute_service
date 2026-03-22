@@ -118,11 +118,55 @@
     ───────────────────────────────────────────────────────────────
     CLASSIFICATION
     ───────────────────────────────────────────────────────────────
-    DISPUTE      — customer actively rejects a charge or claims a billing
-                   error. Money is withheld because of an error in the invoice.
+    DISPUTE       — customer actively rejects a charge or claims a billing error.
     CLARIFICATION — customer asks questions, requests documents, gives notice
-                   of a delay, or lists conditions before payment.
-                   No billing error alleged.
+                    of a delay, or lists conditions before payment.
+
+    ───────────────────────────────────────────────────────────────
+    INTENT — pick exactly ONE from this list:
+    ───────────────────────────────────────────────────────────────
+    FACTUAL_QUERY            — wants read-only info: due dates, balances, line items
+    DISPUTE                  — actively rejects a charge or claims billing error
+    DEDUCTION_CLAIM          — paid less than invoiced, believes their deduction is valid
+    CREDIT_REQUEST           — asks for credit note, refund, or adjustment
+    PAYMENT_ADVICE           — notifying that payment was sent / remittance attached
+    PAYMENT_DELAY_REQUEST    — asking for extension, payment plan, or deferral
+    DOCUMENT_REQUEST         — needs a copy: invoice, statement, credit note, proof
+    INVOICE_CORRECTION_REQUEST — wants invoice data corrected (address, PO, GST code)
+    ESCALATION               — explicitly escalating; CCing management; complaining about wait
+    LEGAL_THREAT             — mentions lawyers, legal action, court, chargeback
+    SOCIAL                   — greetings, pleasantries, thank-yous, no billing content
+    RESOLUTION_ACK           — confirms issue resolved, expresses satisfaction
+    ABUSIVE                  — profanity or personal attacks directed at individuals
+    IRRELEVANT               — misdirected mail, spam, nothing to do with AR
+    DUPLICATE_CONTACT        — following up on existing case, "any update on PV-XXXXX?"
+    MULTI_INTENT             — genuinely contains 2+ distinct billing intents
+    GST_QUERY                — asking about GST treatment, HSN codes, e-invoicing (India)
+    TDS_DEDUCTION            — notifying TDS deducted at source (India statutory)
+    ADVANCE_PAYMENT          — wants to make a prepayment or apply an advance
+
+    ───────────────────────────────────────────────────────────────
+    PIPELINE FLAGS — derive these from the intent:
+    ───────────────────────────────────────────────────────────────
+    requires_new_case    — true only for: DISPUTE, DEDUCTION_CLAIM, CREDIT_REQUEST,
+                           INVOICE_CORRECTION_REQUEST, PAYMENT_DELAY_REQUEST, MULTI_INTENT,
+                           ESCALATION, LEGAL_THREAT, GST_QUERY, TDS_DEDUCTION
+                           false for everything else (SOCIAL, IRRELEVANT, FACTUAL_QUERY,
+                           PAYMENT_ADVICE, DOCUMENT_REQUEST, RESOLUTION_ACK, ABUSIVE,
+                           DUPLICATE_CONTACT, ADVANCE_PAYMENT)
+
+    requires_fork        — true only when intent is MULTI_INTENT and issues are
+                           genuinely separate (different invoices, different FA actions)
+
+    escalate_immediately — true only for LEGAL_THREAT, ESCALATION, ABUSIVE
+
+    priority_override    — "HIGH" for LEGAL_THREAT and ESCALATION, null for everything else
+
+    suggested_action     — one of:
+                           CREATE_CASE        (requires_new_case = true, no existing case)
+                           UPDATE_CASE        (attaching to existing case)
+                           CLOSE_CASE         (RESOLUTION_ACK)
+                           ACKNOWLEDGE_ONLY   (SOCIAL, IRRELEVANT, PAYMENT_ADVICE, DUPLICATE_CONTACT)
 
     ───────────────────────────────────────────────────────────────
     FOR EACH ISSUE return:
@@ -147,12 +191,18 @@
   <p>## Output Format</p>
   <p>Return ONLY valid JSON:
   {
-    "classification":    "DISPUTE" or "CLARIFICATION",
-    "description":       "short customer-facing clause",
-    "invoice_number":    "INV-XXXX or null",
-    "disputed_amount":   "INR X,XX,XXX or null",
-    "priority":          "LOW" or "MEDIUM" or "HIGH",
-    "additional_issues": []
+    "classification":     "DISPUTE" or "CLARIFICATION",
+    "intent":             "one intent from the list above",
+    "description":        "short customer-facing clause",
+    "invoice_number":     "INV-XXXX or null",
+    "disputed_amount":    "INR X,XX,XXX or null",
+    "priority":           "LOW" or "MEDIUM" or "HIGH",
+    "requires_new_case":  true or false,
+    "requires_fork":      true or false,
+    "escalate_immediately": true or false,
+    "priority_override":  "HIGH" or null,
+    "suggested_action":   "CREATE_CASE" or "UPDATE_CASE" or "CLOSE_CASE" or "ACKNOWLEDGE_ONLY",
+    "additional_issues":  []
   }
   When genuinely separate issues exist, additional_issues contains objects
   with the same fields (minus additional_issues itself).

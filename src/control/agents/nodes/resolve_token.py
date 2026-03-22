@@ -27,12 +27,14 @@ _TOKEN_RE = re.compile(r"\b(?:PV|DISP)-(\d+)\b", re.IGNORECASE)
 
 
 def _extract_token(text: str) -> str | None:
-    """Return the first DISP-XXXXX token found in *text*, or None."""
+    """Return the first PV-XXXXX or DISP-XXXXX token found in *text*, or None.
+    Normalises to PV- format so downstream lookup always uses the current prefix.
+    """
     m = _TOKEN_RE.search(text)
-    # Normalise to PV- format regardless of which prefix the customer quoted
-    raw = m.group(0).upper()
+    if not m:
+        return None
     digits = m.group(1)
-    return f"PV-{digits}" if m else None
+    return f"PV-{digits}"
 
 
 @observe(name="node_resolve_token")

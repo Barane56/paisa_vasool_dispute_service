@@ -60,6 +60,8 @@ class DisputeDetailResponse(DisputeResponse):
     assigned_to: Optional[str] = None
     has_new_customer_message: bool = False   # True when latest episode is from CUSTOMER
     source: str = "EMAIL"                    # EMAIL | FA_MANUAL
+    dispute_token: Optional[str] = None
+    parent_dispute_id: Optional[int] = None
 
 
 class DisputeListResponse(BaseModel):

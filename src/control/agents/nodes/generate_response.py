@@ -302,6 +302,51 @@ async def node_generate_ai_response(
         f"PV-{existing_dispute_id:05d}" if existing_dispute_id else "{DISPUTE_TOKEN}"
     )
 
+    # ── Intent fast paths — no LLM call for non-billable intents ─────────────
+    intent = state.get("intent", "UNKNOWN")
+
+    _FAST_RESPONSE_MAP = {
+        "SOCIAL": (
+            "Thank you for reaching out! We'll keep you updated on any open matters. "
+            "Feel free to reply here if you have any questions."
+        ),
+        "IRRELEVANT": None,   # No reply
+        "RESOLUTION_ACK": (
+            "Thank you for letting us know — we're glad this has been resolved. "
+            "Please don't hesitate to reach out if you need anything further."
+        ),
+        "PAYMENT_ADVICE": (
+            "Thank you for the payment notification. We will apply it to your account "
+            "and confirm once it has been processed."
+        ),
+        "DUPLICATE_CONTACT": (
+            "Thank you for following up. Our team is reviewing your case and will be in touch shortly."
+        ),
+    }
+
+    if intent in _FAST_RESPONSE_MAP:
+        fast_response = _FAST_RESPONSE_MAP[intent]
+        logger.info(f"[email_id={email_id}] Intent={intent} — using fast response path")
+        return {
+            **state,
+            "ai_summary":            f"Customer sent a {intent.lower().replace('_', ' ')} message.",
+            "ai_response":           fast_response,
+            "confidence_score":      1.0,
+            "auto_response_generated": fast_response is not None,
+            "questions_to_ask":      [],
+            "memory_context_used":   False,
+            "episodes_referenced":   [],
+            "per_issue_responses":   [{
+                "issue_index":       0,
+                "ai_response":       fast_response,
+                "can_auto_respond":  fast_response is not None,
+                "ai_summary":        f"{intent} message",
+                "confidence_score":  1.0,
+                "questions_to_ask":  [],
+                "dispute_token":     "{DISPUTE_TOKEN}",
+            }],
+        }
+
     # ── Single-issue path ─────────────────────────────────────────────────────
     if not has_inline:
         result = await _call_llm_for_issue(

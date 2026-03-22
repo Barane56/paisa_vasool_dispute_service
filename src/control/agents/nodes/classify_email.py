@@ -33,6 +33,25 @@ logger = logging.getLogger(__name__)
 
 _VALID_PRIORITIES      = frozenset({"LOW", "MEDIUM", "HIGH"})
 _VALID_CLASSIFICATIONS = frozenset({"DISPUTE", "CLARIFICATION"})
+_VALID_INTENTS         = frozenset({
+    "FACTUAL_QUERY", "DISPUTE", "DEDUCTION_CLAIM", "CREDIT_REQUEST",
+    "PAYMENT_ADVICE", "PAYMENT_DELAY_REQUEST", "DOCUMENT_REQUEST",
+    "INVOICE_CORRECTION_REQUEST", "ESCALATION", "LEGAL_THREAT",
+    "SOCIAL", "RESOLUTION_ACK", "ABUSIVE", "IRRELEVANT",
+    "DUPLICATE_CONTACT", "MULTI_INTENT",
+    "GST_QUERY", "TDS_DEDUCTION", "ADVANCE_PAYMENT",
+})
+_VALID_SUGGESTED_ACTIONS = frozenset({
+    "CREATE_CASE", "UPDATE_CASE", "CLOSE_CASE", "ACKNOWLEDGE_ONLY",
+})
+
+# Intents that must NEVER create a new case regardless of anything else
+_NO_NEW_CASE_INTENTS = frozenset({
+    "SOCIAL", "IRRELEVANT", "PAYMENT_ADVICE", "RESOLUTION_ACK",
+    "DUPLICATE_CONTACT", "ADVANCE_PAYMENT", "DOCUMENT_REQUEST", "FACTUAL_QUERY",
+})
+# Intents that trigger immediate FA escalation
+_ESCALATE_INTENTS = frozenset({"LEGAL_THREAT", "ESCALATION", "ABUSIVE"})
 
 
 def _safe_priority(v: Any) -> str:
@@ -41,6 +60,52 @@ def _safe_priority(v: Any) -> str:
 
 def _safe_classification(v: Any) -> str:
     return v.upper() if isinstance(v, str) and v.upper() in _VALID_CLASSIFICATIONS else "CLARIFICATION"
+
+
+def _safe_intent(v: Any) -> str:
+    if isinstance(v, str) and v.upper() in _VALID_INTENTS:
+        return v.upper()
+    return "FACTUAL_QUERY"  # safe default — won't create unnecessary cases
+
+
+def _safe_suggested_action(v: Any) -> str:
+    if isinstance(v, str) and v.upper() in _VALID_SUGGESTED_ACTIONS:
+        return v.upper()
+    return "CREATE_CASE"
+
+
+def _derive_flags_from_intent(intent: str, llm_flags: dict) -> dict:
+    """
+    Merge LLM-provided flags with hard-coded rules per intent.
+    Hard rules always win over LLM output to prevent hallucination-driven case creation.
+    """
+    # Hard override: these intents must never create a case
+    if intent in _NO_NEW_CASE_INTENTS:
+        requires_new_case = False
+        suggested_action  = "ACKNOWLEDGE_ONLY" if intent != "RESOLUTION_ACK" else "CLOSE_CASE"
+    else:
+        requires_new_case = bool(llm_flags.get("requires_new_case", True))
+        suggested_action  = _safe_suggested_action(llm_flags.get("suggested_action"))
+
+    # Hard override: escalation intents always escalate
+    escalate_immediately = intent in _ESCALATE_INTENTS or bool(llm_flags.get("escalate_immediately", False))
+
+    # Hard override: priority for legal/escalation
+    if intent in ("LEGAL_THREAT", "ESCALATION"):
+        priority_override = "HIGH"
+    else:
+        raw_po = (llm_flags.get("priority_override") or "").upper()
+        priority_override = raw_po if raw_po in _VALID_PRIORITIES else None
+
+    requires_fork = bool(llm_flags.get("requires_fork", False)) and intent in ("MULTI_INTENT", "DISPUTE")
+
+    return {
+        "requires_new_case":    requires_new_case,
+        "requires_fork":        requires_fork,
+        "escalate_immediately": escalate_immediately,
+        "priority_override":    priority_override,
+        "suggested_action":     suggested_action,
+    }
 
 
 async def _assign_type(
@@ -132,6 +197,12 @@ async def node_classify_email(
             "_answers_pending_questions": [],
             "_new_dispute_type":          None,
             "inline_issues":              [],
+            "intent":                     "DISPUTE" if classification == "DISPUTE" else "FACTUAL_QUERY",
+            "requires_new_case":          classification == "DISPUTE",
+            "requires_fork":              False,
+            "escalate_immediately":       False,
+            "priority_override":          None,
+            "suggested_action":           "CREATE_CASE" if classification == "DISPUTE" else "ACKNOWLEDGE_ONLY",
         }
 
     # ── Step 1: Structure — how many issues, what are they ───────────────────
@@ -169,6 +240,12 @@ async def node_classify_email(
             "_answers_pending_questions": [],
             "_new_dispute_type":          None,
             "inline_issues":              [],
+            "intent":                     "FACTUAL_QUERY",
+            "requires_new_case":          False,
+            "requires_fork":              False,
+            "escalate_immediately":       False,
+            "priority_override":          None,
+            "suggested_action":           "ACKNOWLEDGE_ONLY",
         }
 
     # Parse structure output
@@ -264,16 +341,33 @@ async def node_classify_email(
         }
     )
 
+    # Derive intent flags — hard rules override LLM suggestions
+    primary_intent = _safe_intent(structure_data.get("intent"))
+    intent_flags   = _derive_flags_from_intent(primary_intent, structure_data)
+
+    logger.info(
+        f"[email_id={state['email_id']}] Intent={primary_intent} "
+        f"requires_new_case={intent_flags['requires_new_case']} "
+        f"escalate={intent_flags['escalate_immediately']} "
+        f"action={intent_flags['suggested_action']}"
+    )
+
     return {
         **state,
         "available_dispute_types":    available_dispute_types,
         "classification":             primary_classification,
         "dispute_type_name":          primary_type_data["dispute_type_name"],
-        "priority":                   primary_priority,
+        "priority":                   intent_flags["priority_override"] or primary_priority,
         "description":                primary_description,
         "invoice_number":             primary_invoice_number,
         "disputed_amount":            primary_disputed_amount,
         "_answers_pending_questions": [],
         "_new_dispute_type":          new_dispute_type,
         "inline_issues":              inline_issues,
+        "intent":                     primary_intent,
+        "requires_new_case":          intent_flags["requires_new_case"],
+        "requires_fork":              intent_flags["requires_fork"],
+        "escalate_immediately":       intent_flags["escalate_immediately"],
+        "priority_override":          intent_flags["priority_override"],
+        "suggested_action":           intent_flags["suggested_action"],
     }

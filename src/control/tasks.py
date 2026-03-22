@@ -165,6 +165,12 @@ def process_live_email_task(self, message_id, existing_dispute_id=None):
                 has_attachment=msg.has_attachment,
                 processing_status="RECEIVED",
             )
+
+            if "google.com" in email_record.sender_email :
+                # skipping google mails 
+                logger.info(f"Skipping Email from google, {email_record.email_id}")
+                return
+
             session.add(email_record)
             await session.flush()
 
@@ -289,6 +295,18 @@ def fetch_mailbox_emails_task(self, mailbox_id):
                     or sender_lower in all_user_emails
                 )
                 source = "OUTBOUND" if is_outbound else "INBOUND"
+
+                # check for google health email or bootstrap emails
+                # current skipping all emails from google.com 
+                # they are conjesting the email pipeline unnecessaryly
+                 
+                is_from_google = "google.com" in sender_lower
+                
+                if is_from_google :
+                    # skipping 
+                    logger.info(f"Skipping email from Google")
+                    continue 
+
 
                 # ── Dispute resolution (3 layers) ─────────────────────────────
                 resolved_dispute_id: Optional[int] = None

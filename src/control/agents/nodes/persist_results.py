@@ -523,7 +523,7 @@ async def _send_auto_response_email(
         # Strip footer lines that contain an unresolved token or DISP-0
         # (happens when dispute creation is skipped for factual auto-responses)
         cleaned_response = re.sub(
-            r"Your (?:dispute|case) reference: (?:\{DISPUTE_TOKEN(?:_\d+)?\}|(?:DISP|PV)-0+)[\s\S]*?Do Not Reply to this email\. This is an Auto Generated Response\.",
+            r"Your (?:dispute|case) reference: (?:\{DISPUTE_TOKEN(?:_\d+)?\}|(?:DISP|PV)-0+\b)[\s\S]*?Do Not Reply to this email\. This is an Auto Generated Response\.",
             "",
             ai_response,
             flags=re.IGNORECASE,
@@ -595,12 +595,30 @@ async def node_persist_results(
             state.get("token_matched_dispute_id")
             or state.get("existing_dispute_id")
         )
+        # Snapshot: was there already a dispute before we do anything?
+        # Used in step 10 to decide whether to suppress the auto-reply.
+        original_dispute_id = dispute_id
         primary_payment_id = (
             state["matched_payment_ids"][0] if state.get("matched_payment_ids") else None
         )
 
         # ── 2. Create or reuse primary dispute ────────────────────────────────
-        if not dispute_id:
+        requires_new_case = state.get("requires_new_case", True)
+        intent            = state.get("intent", "UNKNOWN")
+        suggested_action  = state.get("suggested_action", "CREATE_CASE")
+
+        if not dispute_id and not requires_new_case:
+            # Intent says no new case needed (SOCIAL, IRRELEVANT, FACTUAL_QUERY etc.)
+            # dispute_id should already be set from fetch_context's L0 match if this
+            # is a follow-up email — if it's still None here, there is genuinely no
+            # existing case and we should not create one either.
+            logger.info(
+                f"[email_id={email_id}] Skipping case creation — "
+                f"intent={intent} suggested_action={suggested_action}"
+            )
+            dispute_id    = None
+            dispute_token = None
+        elif not dispute_id:
             # Build primary description
             primary_description = state.get("description", "")
 
@@ -687,6 +705,16 @@ async def node_persist_results(
                 await db_session.flush()
 
         # ── 3. Customer email episode (FIRST — anchors timeline correctly) ──
+        # Skip if dispute_id is None (no case, no existing dispute to attach to)
+        if dispute_id is None:
+            logger.info(
+                f"[email_id={email_id}] Skipping CUSTOMER_EMAIL episode — "
+                f"no dispute_id (intent={intent}, no existing case to attach to)"
+            )
+            await db_session.commit()
+            return {**state, "dispute_id": None, "analysis_id": None,
+                    "forked_dispute_ids": [], "inline_dispute_ids": []}
+
         email_episode = DisputeMemoryEpisode(
             dispute_id=dispute_id,
             episode_type="CUSTOMER_EMAIL",
@@ -878,12 +906,20 @@ async def node_persist_results(
                 f"{inline_dispute_ids} — each with own ai_response"
             )
         # ── 5. AI response episode (written AFTER all tokens are resolved) ────
-        # For single-issue emails ai_response never had inline placeholders so
-        # order did not matter previously. For multi-issue emails we now have
-        # the fully-substituted text. Writing here guarantees the stored episode
-        # always shows real DISP-XXXXX references.
+        # Only write an AI episode if we actually send the email — we don't want
+        # ghost AI_ACKNOWLEDGEMENT entries in the timeline for suppressed follow-ups.
+        # _should_send is resolved in step 10; compute the same logic here early
+        # so we can conditionally write this episode.
+        _ep_is_followup     = bool(original_dispute_id)
+        _ep_intent          = state.get("intent", "UNKNOWN")
+        _ep_can_auto        = state.get("auto_response_generated", False)
+        _ep_factual_auto    = (_ep_intent == "FACTUAL_QUERY" and _ep_can_auto)
+        _ep_will_send       = bool(state.get("ai_response")) and (
+            not _ep_is_followup or _ep_factual_auto
+        )
+
         ai_episode = None
-        if state.get("ai_response"):
+        if state.get("ai_response") and _ep_will_send:
             ep_type = "AI_RESPONSE" if state.get("auto_response_generated") else "AI_ACKNOWLEDGEMENT"
             ai_episode = DisputeMemoryEpisode(
                 dispute_id=dispute_id,
@@ -952,14 +988,14 @@ async def node_persist_results(
                     _fork_subject = f"[{_fork_token}] {_fork_type}"
                     _fork_body    = (
                         f"Dear Customer,\n\n"
-                        f"We have identified a new dispute in your recent correspondence "
-                        f"and raised it as a separate case.\n\n"
-                        f"Your reference: {_fork_token}\n\n"
-                        f"Please use this reference number in all future correspondence "
-                        f"regarding this specific issue.\n\n"
-                        f"Our team will be in touch shortly.\n\n"
+                        f"Thank you for getting in touch. We have logged a new case "
+                        f"based on your recent message.\n\n"
+                        f"Your case reference: {_fork_token}\n\n"
+                        f"Please quote this reference in any future correspondence "
+                        f"regarding this matter. Our team will review and be in touch shortly.\n\n"
                         f"Regards,\n"
-                        f"Accounts Receivable Team"
+                        f"Accounts Receivable Team\n\n"
+                        f"Do Not Reply to this email. This is an Auto Generated Response."
                     )
                     await _fork_svc.compose_and_send(
                         dispute_id=_fork_id,
@@ -1061,12 +1097,58 @@ async def node_persist_results(
 
         await db_session.commit()
 
-        # ── 10. Send AI response via SMTP whenever ai_response is set ──────
-        # auto_response_generated=False means the AI flagged this for human
-        # review, but we still send an acknowledgement so the customer knows
-        # their email was received. The episode type (AI_RESPONSE vs
-        # AI_ACKNOWLEDGEMENT) already captures the distinction.
-        if state.get("ai_response"):
+        # ── 9b. Immediate FA escalation for LEGAL_THREAT, ESCALATION, ABUSIVE ──
+        if state.get("escalate_immediately") and dispute_id:
+            try:
+                from src.data.repositories.user_repository import UserRoleRepository
+                fa_ids = await UserRoleRepository(db_session).get_all_fa()
+                for fa_id in fa_ids[:3]:   # notify up to 3 FAs
+                    db_session.add(DisputeActivityLog(
+                        dispute_id=dispute_id,
+                        action_type="ESCALATED",
+                        performed_by=fa_id,
+                        notes=(
+                            f"AUTO-ESCALATED: intent={state.get('intent')} — "
+                            f"immediate FA review required. "
+                            f"Priority forced to {state.get('priority', 'HIGH')}."
+                        ),
+                    ))
+                logger.warning(
+                    f"[email_id={email_id}] ESCALATION triggered for dispute_id={dispute_id} "
+                    f"intent={state.get('intent')} — notified {len(fa_ids[:3])} FA(s)"
+                )
+            except Exception as esc_err:
+                logger.error(f"[email_id={email_id}] Escalation log failed (non-fatal): {esc_err}")
+
+        # ── 10. Send AI response via SMTP ───────────────────────────────────
+        #
+        # FOLLOW-UP SUPPRESSION RULE (mirrors enterprise AR platforms):
+        #   First email → creates case → always send ACK with case reference.
+        #   Follow-up on existing case → suppress auto-reply.
+        #     Exception: FACTUAL_QUERY with can_auto_respond=True — auto-answer
+        #     is still useful on follow-up threads (e.g. "what is my balance?").
+        #
+        # This prevents the agent from spamming customers with repetitive ACKs
+        # every time they reply to an ongoing case thread.
+
+        _is_followup         = bool(original_dispute_id)   # had an existing dispute before step 2
+        _intent              = state.get("intent", "UNKNOWN")
+        _can_auto            = state.get("auto_response_generated", False)
+        _factual_auto_answer = (_intent == "FACTUAL_QUERY" and _can_auto)
+
+        _should_send = bool(state.get("ai_response")) and (
+            not _is_followup              # always send on new case
+            or _factual_auto_answer       # always send factual auto-answers even on follow-ups
+        )
+
+        if not _should_send and state.get("ai_response") and _is_followup:
+            logger.info(
+                f"[email_id={email_id}] Follow-up auto-reply suppressed — "
+                f"intent={_intent} existing_dispute_id={original_dispute_id}. "
+                f"FA notified via has_new_customer_message flag."
+            )
+
+        if _should_send:
             await _send_auto_response_email(
                 dispute_id=dispute_id,
                 sender_email=state["sender_email"],

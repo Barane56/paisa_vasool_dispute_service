@@ -78,13 +78,32 @@ async def node_fetch_context(
                     **payment.payment_details,
                 })
 
-    # ── Dispute lookup (4-level fallback) ─────────────────────────────────────
+    # ── Dispute lookup ────────────────────────────────────────────────────────
+    # Priority 0: if the task already resolved a dispute (email directly linked
+    # to a dispute via EmailInbox.dispute_id), trust it unconditionally.
+    # This is more authoritative than L1-L4 — the email thread is already
+    # anchored to a specific dispute, regardless of its status.
     customer_id       = state.get("customer_id")
     dispute_type_name = state.get("dispute_type_name", "")
     matched_invoice_id = state.get("matched_invoice_id")
     matched_dispute   = None
 
-    if customer_id:
+    task_dispute_id = state.get("existing_dispute_id")
+    if task_dispute_id:
+        dispute_repo   = DisputeRepository(db_session)
+        matched_dispute = await dispute_repo.get_by_id(task_dispute_id)
+        if matched_dispute:
+            logger.info(
+                f"[email_id={state['email_id']}] L0 match: task-level existing_dispute_id="
+                f"{task_dispute_id} — bypassing L1-L4 matching"
+            )
+        else:
+            logger.warning(
+                f"[email_id={state['email_id']}] task existing_dispute_id={task_dispute_id} "
+                f"not found in DB — falling through to L1-L4"
+            )
+
+    if not matched_dispute and customer_id:
         dispute_repo  = DisputeRepository(db_session)
         open_disputes = await dispute_repo.get_by_customer(customer_id)
 

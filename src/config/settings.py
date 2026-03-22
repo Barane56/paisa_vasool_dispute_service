@@ -83,7 +83,7 @@ class Settings(BaseSettings):
     EMBEDDING_DIMS: int = 768
     EPISODE_SIMILARITY_THRESHOLD: float = 0.75
 
-    FASTEMBED_CACHE_PATH:str ="/app/.fastembed_cache"
+    FASTEMBED_CACHE_PATH: str ="/app/.fastembed_cache"
 
     class Config:
         env_file = ".env"

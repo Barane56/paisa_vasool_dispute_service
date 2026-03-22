@@ -102,14 +102,34 @@ async def node_detect_context_shift(
     token_matched     = state.get("token_matched_dispute_id") is not None
 
     # ── Gate ─────────────────────────────────────────────────────────────────
-    # No existing dispute → brand-new email, nothing to fork from.
-    # Token-matched        → the customer explicitly referenced this dispute;
-    #                        treat as a definitive continuation.
-    if not existing_id or token_matched:
-        reason = "no existing dispute" if not existing_id else "token-matched (definitive continuation)"
-        logger.debug(f"[email_id={email_id}] detect_context_shift: skipped — {reason}")
+    # Skip when:
+    #   • No existing dispute — brand-new email, nothing to fork from
+    #   • Token-matched — customer explicitly referenced this dispute
+    #   • Intent flag says no fork needed — SOCIAL, IRRELEVANT, etc.
+    #   • requires_fork is explicitly False from the classifier
+    intent         = state.get("intent", "UNKNOWN")
+    requires_fork  = state.get("requires_fork", True)
+
+    # Intents that are never forks — no billing content means nothing to split
+    _NON_FORK_INTENTS = frozenset({
+        "SOCIAL", "IRRELEVANT", "ABUSIVE", "RESOLUTION_ACK",
+        "DUPLICATE_CONTACT", "PAYMENT_ADVICE", "ADVANCE_PAYMENT",
+    })
+
+    skip_reason: str | None = None
+    if not existing_id:
+        skip_reason = "no existing dispute"
+    elif token_matched:
+        skip_reason = "token-matched (definitive continuation)"
+    elif intent in _NON_FORK_INTENTS:
+        skip_reason = f"intent={intent} never requires a fork"
+    elif not requires_fork:
+        skip_reason = f"classifier set requires_fork=False for intent={intent}"
+
+    if skip_reason:
+        logger.debug(f"[email_id={email_id}] detect_context_shift: skipped — {skip_reason}")
         langfuse_context.update_current_observation(
-            output={"skipped": True, "reason": reason}
+            output={"skipped": True, "reason": skip_reason}
         )
         return {
             **state,

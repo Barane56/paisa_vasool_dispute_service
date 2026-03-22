@@ -429,7 +429,7 @@ class DisputeService:
         in 5 parallel DB queries — no N+1 calls from the route layer.
         """
         from sqlalchemy import select as sa_select, and_ as sa_and_, func as sa_func
-        from sqlalchemy.orm import joinedload
+        from sqlalchemy.orm import joinedload, selectinload
         from src.data.models.postgres.models import (
             DisputeAIAnalysis, DisputeAssignment, DisputeOpenQuestion,
         )
@@ -532,6 +532,8 @@ class DisputeService:
                     open_questions_count=q_count_map.get(d.dispute_id, 0),
                     assigned_to=active_assign.assignee.email if active_assign else None,
                     has_new_customer_message=ep_actor_map.get(d.dispute_id, False),
+                    dispute_token=getattr(d, "dispute_token", None),
+                    parent_dispute_id=getattr(d, "parent_dispute_id", None),
                 ))
             except Exception as row_err:
                 import logging as _log
@@ -669,5 +671,7 @@ class DisputeService:
                 assigned_to=active_assign.assignee.email if active_assign else None,
                 has_new_customer_message=ep_actor_map.get(d.dispute_id, False),
                 source=getattr(d, "source", "EMAIL") or "EMAIL",
+                dispute_token=getattr(d, "dispute_token", None),
+                parent_dispute_id=getattr(d, "parent_dispute_id", None),
             ))
         return results
