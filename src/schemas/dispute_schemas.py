@@ -165,12 +165,14 @@ class DraftEmailResponse(BaseModel):
 
 class FADisputeCreate(BaseModel):
     customer_id:      str              = Field(..., min_length=1, max_length=100)
+    customer_email:   Optional[str]    = Field(None, description="Customer email address — used to scope AR document graph lookup.")
     dispute_type_id:  Optional[int]    = Field(None, description="Existing dispute type ID. If None, provide custom_type_name.")
     custom_type_name: Optional[str]    = Field(None, min_length=2, max_length=100, description="New dispute type name if no existing type fits.")
     custom_type_desc: Optional[str]    = Field(None, description="Description for the new custom dispute type.")
     priority:         str              = Field("MEDIUM", pattern="^(LOW|MEDIUM|HIGH)$")
     description:      str              = Field(..., min_length=5)
     invoice_id:       Optional[int]    = None
+    ar_document_id:   Optional[int]    = Field(None, description="AR document (PO/GRN/Contract) to pre-link to this dispute via graph lookup.")
     notes:            Optional[str]    = None
 
     @classmethod

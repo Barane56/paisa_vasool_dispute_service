@@ -337,10 +337,17 @@ class DisputeService:
         description:      str,
         invoice_id:       int | None,
         created_by:       int,
+        customer_email:   str | None = None,
+        ar_document_id:   int | None = None,
     ):
         """
         Create a dispute manually by a Finance Associate (no inbound email).
         If dispute_type_id is None, creates a new DisputeType from custom_type_name.
+
+        If ar_document_id is provided, the full document graph rooted at that
+        document is fetched (scoped to customer_email or customer_id) and stored
+        in the dispute's activity log as a structured note so FAs have immediate
+        context. The graph chain is also stored as a JSON note on the activity log.
         """
         from src.data.models.postgres.dispute_models import DisputeType
         from src.data.models.postgres.models import DisputeActivityLog
@@ -405,6 +412,54 @@ class DisputeService:
             performed_by=created_by,
             notes=f"Dispute created manually by FA. Type: {dtype.reason_name}.",
         ))
+
+        # ── AR document graph chain attachment ────────────────────────────────
+        # Fetch the full graph rooted at the selected AR document and write
+        # every doc_id into dispute_ar_documents so the Docs tab shows only
+        # docs relevant to this specific dispute.
+        if ar_document_id:
+            try:
+                from src.core.services.ar_document_service import (
+                    ARDocumentService, resolve_customer_scope,
+                )
+                ar_svc = ARDocumentService(self.db)
+                scope  = resolve_customer_scope(customer_email or customer_id)
+                chain  = await ar_svc.get_document_chain_for_doc_id(
+                    doc_id=ar_document_id,
+                    customer_scope=scope,
+                )
+                if chain:
+                    doc_ids = [d["doc_id"] for d in chain if d.get("doc_id")]
+                    await ar_svc.link_ar_documents_to_dispute(
+                        dispute_id=dispute.dispute_id,
+                        doc_ids=doc_ids,
+                        linked_by=created_by,
+                        context_note=f"FA manual: anchor doc_id={ar_document_id}, scope={scope}",
+                    )
+                    self.db.add(DisputeActivityLog(
+                        dispute_id=dispute.dispute_id,
+                        action_type="DOCUMENT_LINKED",
+                        performed_by=created_by,
+                        notes=(
+                            f"Linked {len(doc_ids)} AR document(s) from graph "
+                            f"rooted at doc_id={ar_document_id} (scope={scope}): "
+                            + ", ".join(f"{d['doc_type']}#{d['doc_id']}" for d in chain)
+                        ),
+                    ))
+                    logger.info(
+                        f"FA dispute {dispute.dispute_id}: linked {len(doc_ids)} "
+                        f"AR doc(s) from doc_id={ar_document_id} scope={scope}"
+                    )
+                else:
+                    logger.info(
+                        f"FA dispute {dispute.dispute_id}: ar_document_id={ar_document_id} "
+                        f"returned empty chain (scope={scope})"
+                    )
+            except Exception as ar_err:
+                logger.warning(
+                    f"FA dispute {dispute.dispute_id}: AR graph link failed "
+                    f"for doc_id={ar_document_id} (non-fatal): {ar_err}"
+                )
 
         await self.db.commit()
         await self.db.refresh(dispute)
@@ -675,3 +730,241 @@ class DisputeService:
                 parent_dispute_id=getattr(d, "parent_dispute_id", None),
             ))
         return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ForkRecommendationService
+# All DB access for fork recommendation operations lives here.
+# Routes are kept thin — no inline queries.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ForkRecommendationService:
+    def __init__(self, db: AsyncSession) -> None:
+        self.db = db
+
+    async def list_pending(self, dispute_id: int) -> list[dict]:
+        """Return all PENDING recommendations for a dispute."""
+        from src.data.models.postgres.dispute_models import DisputeForkRecommendation
+        rows = (await self.db.execute(
+            select(DisputeForkRecommendation)
+            .where(
+                DisputeForkRecommendation.dispute_id == dispute_id,
+                DisputeForkRecommendation.status     == "PENDING",
+            )
+            .order_by(DisputeForkRecommendation.created_at)
+        )).scalars().all()
+        return [self._fmt(r) for r in rows]
+
+    async def dismiss(self, dispute_id: int, recommendation_id: int, user_id: int) -> dict:
+        """Mark a PENDING recommendation as DISMISSED."""
+        rec = await self._get_pending(dispute_id, recommendation_id)
+        rec.status      = "DISMISSED"
+        rec.actioned_by = user_id
+        rec.actioned_at = datetime.now(timezone.utc)
+        await self.db.commit()
+        return {"status": "DISMISSED"}
+
+    async def accept(
+        self,
+        dispute_id:        int,
+        recommendation_id: int,
+        user_id:           int,
+        dispute_type_id:   int | None,
+        custom_type_name:  str | None,
+        custom_type_desc:  str | None,
+        description:       str,
+        priority:          str,
+        customer_email:    str | None,
+        ar_document_id:    int | None,
+    ) -> dict:
+        """
+        Accept a fork recommendation:
+          1. Validate recommendation is PENDING
+          2. Load parent dispute for customer_id
+          3. Create the new dispute via DisputeService.create_fa_dispute
+          4. Auto-find AR documents from suggested_invoice_number if no
+             ar_document_id was explicitly provided by the FA
+          5. Override assignment with fewest-open-cases logic
+          6. Link new → parent as FORKED_FROM
+          7. Mark recommendation ACCEPTED
+        """
+        from src.data.models.postgres.models import DisputeAssignment, DisputeRelationship
+        from sqlalchemy import delete as sa_delete
+
+        rec = await self._get_pending(dispute_id, recommendation_id)
+
+        # Fall back to suggestion when caller provided nothing
+        if not dispute_type_id and not custom_type_name:
+            custom_type_name = rec.suggested_type_hint or "General Clarification"
+        if not description:
+            description = rec.suggested_description or ""
+
+        # Load parent dispute
+        from src.data.repositories.repositories import DisputeRepository
+        parent = await DisputeRepository(self.db).get_by_id(dispute_id)
+        if not parent:
+            raise ValueError(f"Parent dispute {dispute_id} not found")
+
+        effective_customer_email = customer_email or parent.customer_id
+
+        # ── Auto-resolve ar_document_id from suggested_invoice_number ─────────
+        # If the FA didn't pick an AR document and the recommendation has a
+        # suggested invoice/reference number, walk the graph to find the anchor
+        # doc and use it.  This ensures the new dispute gets pre-linked AR docs
+        # automatically without the FA having to manually select one.
+        resolved_ar_doc_id = ar_document_id
+        if not resolved_ar_doc_id and rec.suggested_invoice_number:
+            try:
+                from src.core.services.ar_document_service import (
+                    ARDocumentService, resolve_customer_scope,
+                )
+                ar_svc = ARDocumentService(self.db)
+                scope  = resolve_customer_scope(effective_customer_email)
+                chain  = await ar_svc.get_document_chain_for_invoice(
+                    invoice_number = rec.suggested_invoice_number,
+                    customer_scope = scope,
+                )
+                if chain:
+                    # Use the first (anchor) document as the ar_document_id
+                    resolved_ar_doc_id = chain[0].get("doc_id")
+                    logger.info(
+                        f"[fork-accept] auto-resolved ar_document_id="
+                        f"{resolved_ar_doc_id} from invoice="
+                        f"{rec.suggested_invoice_number}"
+                    )
+            except Exception as ar_err:
+                logger.warning(
+                    f"[fork-accept] AR doc auto-resolve failed (non-fatal): {ar_err}"
+                )
+
+        # Create new dispute
+        fa_svc      = DisputeService(self.db)
+        new_dispute = await fa_svc.create_fa_dispute(
+            customer_id      = parent.customer_id,
+            dispute_type_id  = dispute_type_id,
+            custom_type_name = custom_type_name,
+            custom_type_desc = custom_type_desc,
+            priority         = priority or rec.suggested_priority,
+            description      = description,
+            invoice_id       = None,
+            created_by       = user_id,
+            customer_email   = effective_customer_email,
+            ar_document_id   = resolved_ar_doc_id,
+        )
+        # create_fa_dispute commits — re-fetch rec in the same session
+        rec = await self._get_pending(dispute_id, recommendation_id)
+
+        # Replace auto-assignment with fewest-open-cases choice
+        await self.db.execute(
+            sa_delete(DisputeAssignment).where(
+                DisputeAssignment.dispute_id == new_dispute.dispute_id,
+            )
+        )
+        await self.db.flush()
+        await self._assign_fewest_cases(
+            dispute_id     = new_dispute.dispute_id,
+            prefer_user_id = user_id,
+        )
+
+        # Link new dispute → parent as FORKED_FROM
+        self.db.add(DisputeRelationship(
+            source_dispute_id = new_dispute.dispute_id,
+            target_dispute_id = dispute_id,
+            relationship_type = "FORKED_FROM",
+            context_note      = (
+                f"Created from fork recommendation #{recommendation_id}. "
+                f"AI confidence: {rec.confidence:.0%}. {rec.reasoning or ''}"
+            )[:500],
+        ))
+
+        # Mark accepted
+        rec.status         = "ACCEPTED"
+        rec.new_dispute_id = new_dispute.dispute_id
+        rec.actioned_by    = user_id
+        rec.actioned_at    = datetime.now(timezone.utc)
+        await self.db.commit()
+
+        return {
+            "status":         "ACCEPTED",
+            "new_dispute_id": new_dispute.dispute_id,
+            "dispute_token":  new_dispute.dispute_token,
+        }
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    async def _get_pending(self, dispute_id: int, recommendation_id: int):
+        from src.data.models.postgres.dispute_models import DisputeForkRecommendation
+        from src.core.exceptions import DisputeNotFoundError
+        rec = (await self.db.execute(
+            select(DisputeForkRecommendation).where(
+                DisputeForkRecommendation.recommendation_id == recommendation_id,
+                DisputeForkRecommendation.dispute_id        == dispute_id,
+            )
+        )).scalar_one_or_none()
+        if not rec:
+            raise DisputeNotFoundError(f"Recommendation {recommendation_id} not found")
+        if rec.status != "PENDING":
+            raise ValueError(f"Recommendation already {rec.status.lower()}")
+        return rec
+
+    async def _assign_fewest_cases(self, dispute_id: int, prefer_user_id: int) -> None:
+        """Assign dispute to FA with fewest open cases, preferring prefer_user_id on ties."""
+        from src.data.models.postgres.models import DisputeAssignment, DisputeMaster
+        from src.data.repositories.repositories import UserRoleRepository
+        from sqlalchemy import func as sqlfunc
+
+        user_role_repo = UserRoleRepository(self.db)
+        fa_user_ids    = await user_role_repo.get_all_fa()
+        if not fa_user_ids:
+            logger.warning(f"No FA users — dispute_id={dispute_id} left unassigned")
+            return
+
+        rows = (await self.db.execute(
+            select(
+                DisputeAssignment.assigned_to,
+                sqlfunc.count(DisputeAssignment.dispute_id).label("cnt"),
+            )
+            .join(DisputeMaster, DisputeMaster.dispute_id == DisputeAssignment.dispute_id)
+            .where(
+                DisputeAssignment.assigned_to.in_(fa_user_ids),
+                DisputeAssignment.status == "ACTIVE",
+                DisputeMaster.status.in_(["OPEN", "UNDER_REVIEW"]),
+            )
+            .group_by(DisputeAssignment.assigned_to)
+        )).fetchall()
+
+        open_count: dict[int, int] = {row[0]: row[1] for row in rows}
+        for uid in fa_user_ids:
+            open_count.setdefault(uid, 0)
+
+        min_count = min(open_count.values())
+        if prefer_user_id in open_count and open_count[prefer_user_id] <= min_count:
+            chosen = prefer_user_id
+        else:
+            chosen = min(open_count, key=lambda u: open_count[u])
+
+        self.db.add(DisputeAssignment(
+            dispute_id  = dispute_id,
+            assigned_to = chosen,
+            status      = "ACTIVE",
+        ))
+        await self.db.flush()
+        logger.info(
+            f"[fork-accept] assigned dispute_id={dispute_id} "
+            f"to user_id={chosen} (open={open_count[chosen]})"
+        )
+
+    @staticmethod
+    def _fmt(r) -> dict:
+        return {
+            "recommendation_id":        r.recommendation_id,
+            "dispute_id":               r.dispute_id,
+            "confidence":               round(r.confidence, 2),
+            "reasoning":                r.reasoning,
+            "suggested_invoice_number": r.suggested_invoice_number,
+            "suggested_type_hint":      r.suggested_type_hint,
+            "suggested_description":    r.suggested_description,
+            "suggested_priority":       r.suggested_priority,
+            "status":                   r.status,
+            "created_at":               r.created_at.isoformat(),
+        }

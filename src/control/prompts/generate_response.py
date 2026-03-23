@@ -30,7 +30,8 @@ def build_generate_response_prompt(
     inline_issues: Optional[List[Dict]] = None,
     is_focused_issue: bool = False,
     focus_invoice_number: Optional[str] = None,
-    attachment_metadata: Optional[List[Dict]] = None,  # NEW: [{file_name, file_type, extracted_text}]
+    attachment_metadata: Optional[List[Dict]] = None,
+    ar_document_chain: Optional[List[Dict]] = None,  # related AR docs from graph
 ) -> str:
     inline_issues_ctx = "None"
     if inline_issues and not is_focused_issue:
@@ -57,6 +58,20 @@ def build_generate_response_prompt(
         if parts:
             att_ctx = "\n\n---\n\n".join(parts)[:5000]
 
+    # Build AR document chain context
+    doc_chain_ctx = "No AR documents on file for this invoice."
+    if ar_document_chain:
+        parts = []
+        for item in ar_document_chain:
+            doc_type   = item.get("doc_type", "UNKNOWN")
+            doc_date   = item.get("doc_date") or "date unknown"
+            shared     = item.get("shared_keys", [])
+            shared_str = ", ".join(
+                f"{k['key_type']}={k['key_value_raw']}" for k in shared
+            )
+            parts.append(f"  - {doc_type} (dated {doc_date}) linked via: {shared_str}")
+        doc_chain_ctx = "Uploaded AR documents linked to this invoice:\n" + "\n".join(parts)
+
     context = {
         "subject":               subject,
         "sender_email":          sender_email,
@@ -79,6 +94,7 @@ def build_generate_response_prompt(
         "is_focused_issue":      is_focused_issue,
         "focus_invoice_number":  focus_invoice_number or "not specified",
         "attachment_ctx":        att_ctx,
+        "doc_chain_ctx":         doc_chain_ctx,
     }
 
     messages = render_poml(_TEMPLATE, context)

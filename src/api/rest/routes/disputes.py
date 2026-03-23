@@ -318,6 +318,8 @@ async def create_dispute_manually(
         description=data.description,
         invoice_id=data.invoice_id,
         created_by=current_user.user_id,
+        customer_email=data.customer_email,
+        ar_document_id=data.ar_document_id,
     )
     return await service.get_enriched_detail(dispute.dispute_id)
 
@@ -480,3 +482,145 @@ async def delete_dispute_document(
 
     await doc_service.delete_document(document_id)
     return SuccessResponse(message=f"Document {document_id} deleted")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AR Document Graph — per-dispute linked documents
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/{dispute_id}/ar-documents")
+async def get_dispute_ar_documents(
+    dispute_id:   int,
+    db:           AsyncSession = Depends(get_db),
+    current_user: CurrentUser  = Depends(get_current_user),
+):
+    """
+    Return all AR documents linked to this dispute (PO, GRN, Invoice, Payment, etc.)
+    with their extracted reference keys and connected graph documents.
+    Only shows documents relevant to this specific dispute — not all customer docs.
+    """
+    from src.core.services.ar_document_service import ARDocumentService
+    ar_svc = ARDocumentService(db)
+    return await ar_svc.get_ar_documents_for_dispute(dispute_id)
+
+
+from pydantic import BaseModel as _BM2
+
+class AnchorUpdateRequest(_BM2):
+    doc_id:         int
+    customer_email: Optional[str] = None   # scope override; defaults to dispute.customer_id
+
+
+@router.put("/{dispute_id}/ar-documents/anchor")
+async def update_dispute_ar_anchor(
+    dispute_id:   int,
+    body:         AnchorUpdateRequest,
+    db:           AsyncSession = Depends(get_db),
+    current_user: CurrentUser  = Depends(get_current_user),
+):
+    """
+    Replace the anchor AR document for a dispute.
+
+    Clears all currently linked AR documents and re-walks the graph from
+    the newly selected anchor document, linking the full chain.
+    Returns the updated linked document list.
+    """
+    from fastapi import HTTPException
+    from src.core.services.ar_document_service import ARDocumentService, resolve_customer_scope
+    from src.data.repositories.repositories import DisputeRepository
+
+    # Resolve customer scope: prefer explicit override, fall back to dispute's customer_id
+    scope: str
+    if body.customer_email:
+        scope = resolve_customer_scope(body.customer_email)
+    else:
+        dispute = await DisputeRepository(db).get_by_id(dispute_id)
+        if not dispute:
+            raise HTTPException(status_code=404, detail="Dispute not found")
+        scope = resolve_customer_scope(dispute.customer_id)
+
+    try:
+        ar_svc = ARDocumentService(db)
+        result = await ar_svc.replace_anchor_document(
+            dispute_id     = dispute_id,
+            new_doc_id     = body.doc_id,
+            user_id        = current_user.user_id,
+            customer_scope = scope,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Fork Recommendations  (AI-suggested case splits — FA decides)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from pydantic import BaseModel as _BaseModel   # local alias avoids conflict with schemas
+
+class ForkRecommendationAction(_BaseModel):
+    action:           str             # "ACCEPT" | "DISMISS"
+    dispute_type_id:  Optional[int]   = None
+    custom_type_name: Optional[str]   = None
+    custom_type_desc: Optional[str]   = None
+    description:      Optional[str]   = None
+    priority:         str             = "MEDIUM"
+    customer_email:   Optional[str]   = None
+    ar_document_id:   Optional[int]   = None
+
+
+@router.get("/{dispute_id}/fork-recommendations")
+async def get_fork_recommendations(
+    dispute_id:   int,
+    db:           AsyncSession = Depends(get_db),
+    current_user: CurrentUser  = Depends(get_current_user),
+):
+    """Return all PENDING fork recommendations for this dispute."""
+    from src.core.services.dispute_service import ForkRecommendationService
+    return await ForkRecommendationService(db).list_pending(dispute_id)
+
+
+@router.post("/{dispute_id}/fork-recommendations/{recommendation_id}/action")
+async def action_fork_recommendation(
+    dispute_id:        int,
+    recommendation_id: int,
+    body:              ForkRecommendationAction,
+    db:                AsyncSession = Depends(get_db),
+    current_user:      CurrentUser  = Depends(get_current_user),
+):
+    """
+    ACCEPT or DISMISS a fork recommendation.
+    ACCEPT  → creates a new dispute linked as FORKED_FROM, auto-assigns FA.
+    DISMISS → hides the recommendation permanently.
+    """
+    from fastapi import HTTPException
+    from src.core.services.dispute_service import ForkRecommendationService
+    from src.core.exceptions import DisputeNotFoundError
+
+    svc = ForkRecommendationService(db)
+    action = (body.action or "").upper()
+
+    try:
+        if action == "DISMISS":
+            return await svc.dismiss(dispute_id, recommendation_id, current_user.user_id)
+
+        if action == "ACCEPT":
+            return await svc.accept(
+                dispute_id        = dispute_id,
+                recommendation_id = recommendation_id,
+                user_id           = current_user.user_id,
+                dispute_type_id   = body.dispute_type_id,
+                custom_type_name  = body.custom_type_name,
+                custom_type_desc  = body.custom_type_desc,
+                description       = body.description or "",
+                priority          = body.priority,
+                customer_email    = body.customer_email,
+                ar_document_id    = body.ar_document_id,
+            )
+
+        raise HTTPException(status_code=400, detail="action must be ACCEPT or DISMISS")
+
+    except DisputeNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))

@@ -25,6 +25,9 @@
   <p>## Payment Records</p>
   <p>{{ payment_ctx }}</p>
 
+  <p>## AR Document Chain (PO / GRN / Contract on file)</p>
+  <p>{{ doc_chain_ctx }}</p>
+
   <p>## Previous Conversation Summary</p>
   <p>{{ memory_ctx }}</p>
 

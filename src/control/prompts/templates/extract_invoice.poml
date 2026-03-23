@@ -20,5 +20,5 @@
   </hint>
 
   <p>## Output Format</p>
-  <p>Return ONLY valid JSON: { "invoice_number": "string or null", "invoice_date": "YYYY-MM-DD or null", "due_date": "YYYY-MM-DD or null", "vendor_name": "string or null", "customer_name": "string or null", "customer_id": "string or null", "line_items": [{"description": "string", "qty": number_or_null, "unit_price": number_or_null, "total": number_or_null}], "subtotal": number_or_null, "tax_amount": number_or_null, "total_amount": number_or_null, "currency": "string or null", "payment_terms": "string or null", "po_number": "string or null", "notes": "string or null" }</p>
+  <p>Return ONLY valid JSON: { "invoice_number": "string or null", "invoice_date": "YYYY-MM-DD or null", "due_date": "YYYY-MM-DD or null", "vendor_name": "string or null", "customer_name": "string or null", "customer_id": "string or null", "line_items": [{"description": "string", "qty": number_or_null, "unit_price": number_or_null, "total": number_or_null}], "subtotal": number_or_null, "tax_amount": number_or_null, "total_amount": number_or_null, "currency": "string or null", "payment_terms": "string or null", "po_number": "string or null", "grn_number": "string or null", "payment_ref": "string or null", "contract_number": "string or null", "notes": "string or null" }</p>
 </poml>

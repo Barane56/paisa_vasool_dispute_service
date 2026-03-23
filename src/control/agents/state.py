@@ -26,6 +26,10 @@ class EmailProcessingState(TypedDict):
     # ── Groq-extracted invoice fields ─────────────────────────────────────────
     groq_extracted:            Optional[Dict]
     candidate_invoice_numbers: List[str]
+    # Non-invoice AR reference numbers extracted from the email.
+    # Each entry: {"value": "PO-BK-2025-001", "key_type": "po_number"}
+    # Used by fetch_context as a fallback graph-walk trigger when no invoice matched.
+    candidate_references:      List[Dict]
 
     # ── DB-matched invoice + payments ─────────────────────────────────────────
     matched_invoice_id:     Optional[int]
@@ -41,6 +45,8 @@ class EmailProcessingState(TypedDict):
     priority:                   str
     description:                str
     invoice_number:             Optional[str]   # invoice number for PRIMARY issue
+    document_reference:         Optional[str]   # non-invoice AR ref for PRIMARY issue (PO/GRN/etc.)
+    document_reference_type:    Optional[str]   # key_type for document_reference
     disputed_amount:            Optional[str]   # amount string for PRIMARY issue
     _answers_pending_questions: List[int]
     _new_dispute_type:          Optional[Dict]
@@ -64,7 +70,11 @@ class EmailProcessingState(TypedDict):
     # Additional issues found in the SAME email — each becomes its own dispute.
     # Shape per item: {classification, dispute_type_name, is_new_type,
     #   new_type_description, new_type_severity, priority, description,
-    #   invoice_number, disputed_amount}
+    #   invoice_number, disputed_amount,
+    #   document_reference, document_reference_type}
+    # document_reference / document_reference_type carry non-invoice AR refs
+    # (PO number, GRN number, payment ref, contract number) for issues where
+    # no invoice number was stated — used for AR graph lookup in generate_response.
     inline_issues: List[Dict]
 
     # ── Context (fetched AFTER classification) ────────────────────────────────
@@ -110,6 +120,9 @@ class EmailProcessingState(TypedDict):
     #   questions_to_ask, dispute_token (placeholder resolved by persist_results)
     per_issue_responses: List[Dict]
 
+    # ── AR Document graph chain ───────────────────────────────────────────────
+    ar_document_chain: List[Dict]   # related AR docs found via graph — injected into LLM
+
     # ── Final ─────────────────────────────────────────────────────────────────
     dispute_id:          Optional[int]   # primary dispute id for this email
     forked_dispute_ids:  List[int]       # context-shift forks (follow-up emails)
@@ -139,6 +152,7 @@ def build_initial_state(
         "all_text":                    "",
         "groq_extracted":              None,
         "candidate_invoice_numbers":   [],
+        "candidate_references":        [],
         "matched_invoice_id":          None,
         "matched_invoice_number":      None,
         "matched_payment_ids":         [],
@@ -149,6 +163,8 @@ def build_initial_state(
         "priority":                    "MEDIUM",
         "description":                 "",
         "invoice_number":              None,
+        "document_reference":          None,
+        "document_reference_type":     None,
         "disputed_amount":             None,
         "_answers_pending_questions":  [],
         "_new_dispute_type":           None,
@@ -191,4 +207,5 @@ def build_initial_state(
         "inline_dispute_ids":          [],
         "analysis_id":                 None,
         "error":                       None,
+        "ar_document_chain":           [],
     }

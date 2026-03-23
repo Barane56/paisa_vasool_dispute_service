@@ -124,9 +124,24 @@ async def _create_dispute(
     return dispute
 
 
-async def _auto_assign(db_session, dispute_id: int, email_id: int, label: str = ""):
-    from src.data.models.postgres.models import DisputeAssignment
+async def _auto_assign(
+    db_session,
+    dispute_id:     int,
+    email_id:       int,
+    label:          str = "",
+    prefer_user_id: int | None = None,
+) -> None:
+    """
+    Assign dispute_id to the FA with the fewest currently open disputes.
+
+    prefer_user_id — when provided (e.g. the FA who clicked "Create Case"),
+    this user is chosen when they are tied for the minimum open count.
+    This handles the single-FA case correctly: the solo FA always gets
+    their own manually-created cases.
+    """
+    from src.data.models.postgres.models import DisputeAssignment, DisputeMaster
     from src.data.repositories.repositories import DisputeAssignmentRepository, UserRoleRepository
+    from sqlalchemy import select, func as sqlfunc
 
     assign_repo       = DisputeAssignmentRepository(db_session)
     active_assignment = await assign_repo.get_active_assignment(dispute_id)
@@ -134,21 +149,53 @@ async def _auto_assign(db_session, dispute_id: int, email_id: int, label: str = 
         logger.info(f"[email_id={email_id}] {label} dispute_id={dispute_id} already assigned")
         return
 
-    # get_all_fa() returns List[int] — plain user_id values, not User objects
     user_role_repo = UserRoleRepository(db_session)
     fa_user_ids    = await user_role_repo.get_all_fa()
     if not fa_user_ids:
-        logger.warning(f"[email_id={email_id}] {label} no FA users found — dispute_id={dispute_id} unassigned")
+        logger.warning(
+            f"[email_id={email_id}] {label} no FA users found — "
+            f"dispute_id={dispute_id} unassigned"
+        )
         return
 
+    # Count open disputes per FA in one aggregation query
+    open_counts_rows = (await db_session.execute(
+        select(
+            DisputeAssignment.assigned_to,
+            sqlfunc.count(DisputeAssignment.dispute_id).label("cnt"),
+        )
+        .join(DisputeMaster, DisputeMaster.dispute_id == DisputeAssignment.dispute_id)
+        .where(
+            DisputeAssignment.assigned_to.in_(fa_user_ids),
+            DisputeAssignment.status == "ACTIVE",
+            DisputeMaster.status.in_(["OPEN", "UNDER_REVIEW"]),
+        )
+        .group_by(DisputeAssignment.assigned_to)
+    )).fetchall()
+
+    open_count: dict[int, int] = {row[0]: row[1] for row in open_counts_rows}
+    for uid in fa_user_ids:
+        open_count.setdefault(uid, 0)
+
+    min_count = min(open_count.values())
+    if prefer_user_id and prefer_user_id in open_count:
+        # Pick the preferred user if they are at or below the minimum
+        chosen_fa = (
+            prefer_user_id
+            if open_count[prefer_user_id] <= min_count
+            else min(open_count, key=lambda u: open_count[u])
+        )
+    else:
+        chosen_fa = min(open_count, key=lambda u: open_count[u])
+
     db_session.add(DisputeAssignment(
-        dispute_id=dispute_id,
-        assigned_to=fa_user_ids[0],   # already an int
-        status="ACTIVE",
+        dispute_id  = dispute_id,
+        assigned_to = chosen_fa,
+        status      = "ACTIVE",
     ))
     logger.info(
         f"[email_id={email_id}] {label} auto-assigned dispute_id={dispute_id} "
-        f"to user_id={fa_user_ids[0]}"
+        f"to user_id={chosen_fa} (open_cases={open_count[chosen_fa]})"
     )
 
 
@@ -769,6 +816,31 @@ async def node_persist_results(
                 context_note=f"Payment {pid} — supporting document",
             )
 
+        # ── 4b. AR document graph chain → dispute_ar_documents ───────────────
+        # Link every document from the graph chain to this dispute so the Docs
+        # tab can show only dispute-relevant documents (not all customer docs).
+        ar_chain = state.get("ar_document_chain") or []
+        if ar_chain:
+            try:
+                from src.core.services.ar_document_service import ARDocumentService
+                ar_svc  = ARDocumentService(db_session)
+                doc_ids = [d["doc_id"] for d in ar_chain if d.get("doc_id")]
+                if doc_ids:
+                    await ar_svc.link_ar_documents_to_dispute(
+                        dispute_id=dispute_id,
+                        doc_ids=doc_ids,
+                        linked_by=None,   # agent-linked
+                        context_note=f"Linked via email pipeline graph walk (invoice={state.get('matched_invoice_number')})",
+                    )
+                    logger.info(
+                        f"[email_id={email_id}] Linked {len(doc_ids)} AR doc(s) "
+                        f"to dispute_id={dispute_id}"
+                    )
+            except Exception as ar_link_err:
+                logger.warning(
+                    f"[email_id={email_id}] AR doc link failed (non-fatal): {ar_link_err}"
+                )
+
         # ── 6. FA open questions ──────────────────────────────────────────────
         for item in state.get("questions_to_ask", []):
             question_text = (
@@ -821,17 +893,127 @@ async def node_persist_results(
         pir_by_index = {r["issue_index"]: r for r in per_issue_responses}
 
         if inline_issues:
-            inline_dispute_ids = await _persist_inline_disputes(
-                db_session,
-                primary_dispute_id=dispute_id,
-                inline_issues=inline_issues,
-                email_id=email_id,
-                customer_id=state.get("customer_id") or "unknown",
-                matched_invoice_id=state.get("matched_invoice_id"),
-                email_subject=state.get("subject", ""),
-                email_body=state.get("body_text", ""),
-                ai_response=None,   # each inline gets its own episode written below
-            )
+            # ── Follow-up email: write fork recommendations, do NOT auto-create ──
+            # When an existing dispute is already matched (original_dispute_id is
+            # set), the customer is replying to an existing thread. New issues
+            # detected in that reply go through the FA recommendation system —
+            # the FA decides whether to create new cases.
+            #
+            # Brand-new emails (original_dispute_id is None) auto-create inline
+            # disputes as before, since there's no existing thread to confuse.
+            if original_dispute_id:
+                try:
+                    from src.data.models.postgres.dispute_models import DisputeForkRecommendation
+                    for iss in inline_issues:
+                        rec = DisputeForkRecommendation(
+                            dispute_id               = dispute_id,
+                            email_id                 = email_id,
+                            confidence               = 0.85,
+                            reasoning                = (
+                                f"New issue detected in follow-up email: "
+                                f"{iss.get('description', '')[:200]}"
+                            ),
+                            suggested_invoice_number = iss.get("invoice_number"),
+                            suggested_type_hint      = iss.get("dispute_type_name"),
+                            suggested_description    = iss.get("description"),
+                            suggested_priority       = iss.get("priority", "MEDIUM"),
+                            status                   = "PENDING",
+                        )
+                        db_session.add(rec)
+                    await db_session.flush()
+                    logger.info(
+                        f"[email_id={email_id}] Follow-up had {len(inline_issues)} "
+                        f"inline issue(s) — wrote fork recommendations instead of "
+                        f"auto-creating disputes"
+                    )
+                except Exception as rec_err:
+                    logger.warning(
+                        f"[email_id={email_id}] Could not write inline fork "
+                        f"recommendations (non-fatal): {rec_err}"
+                    )
+                # inline_dispute_ids stays [] — no auto-creation for follow-ups
+
+            else:
+                # Brand-new email — auto-create inline disputes as before
+                inline_dispute_ids = await _persist_inline_disputes(
+                    db_session,
+                    primary_dispute_id=dispute_id,
+                    inline_issues=inline_issues,
+                    email_id=email_id,
+                    customer_id=state.get("customer_id") or "unknown",
+                    matched_invoice_id=state.get("matched_invoice_id"),
+                    email_subject=state.get("subject", ""),
+                    email_body=state.get("body_text", ""),
+                    ai_response=None,   # each inline gets its own episode written below
+                )
+
+            # ── 9a-AR: Link AR documents for each inline dispute ──────────────
+            # For each inline dispute we walk the graph using that issue's own
+            # invoice_number or document_reference (PO/GRN/etc.), exactly the
+            # same dual-priority logic used in fetch_context for the primary.
+            # Non-fatal: any failure logs a warning and continues.
+            _inline_customer_id = state.get("customer_id") or ""
+            for _seq_idx, (_iid, _issue) in enumerate(
+                zip(inline_dispute_ids, inline_issues), 2
+            ):
+                try:
+                    from src.core.services.ar_document_service import (
+                        ARDocumentService, resolve_customer_scope,
+                    )
+                    _ar_svc   = ARDocumentService(db_session)
+                    _scope    = resolve_customer_scope(_inline_customer_id)
+                    _chain: list = []
+
+                    _inv_num = (_issue.get("invoice_number") or "").strip()
+                    _doc_ref = (_issue.get("document_reference") or "").strip()
+                    _doc_ref_type = (_issue.get("document_reference_type") or "").strip()
+
+                    if _inv_num:
+                        try:
+                            _chain = await _ar_svc.get_document_chain_for_invoice(
+                                invoice_number = _inv_num,
+                                customer_scope = _scope,
+                            )
+                        except Exception as _ie:
+                            logger.warning(
+                                f"[email_id={email_id}] inline[{_seq_idx}] AR inv-walk "
+                                f"failed for '{_inv_num}' (non-fatal): {_ie}"
+                            )
+
+                    if not _chain and _doc_ref and _doc_ref_type:
+                        try:
+                            _chain = await _ar_svc.get_document_chain_for_reference(
+                                ref_value      = _doc_ref,
+                                key_type       = _doc_ref_type,
+                                customer_scope = _scope,
+                            )
+                        except Exception as _re:
+                            logger.warning(
+                                f"[email_id={email_id}] inline[{_seq_idx}] AR ref-walk "
+                                f"failed for {_doc_ref_type}='{_doc_ref}' (non-fatal): {_re}"
+                            )
+
+                    if _chain:
+                        _doc_ids = [d["doc_id"] for d in _chain if d.get("doc_id")]
+                        if _doc_ids:
+                            await _ar_svc.link_ar_documents_to_dispute(
+                                dispute_id   = _iid,
+                                doc_ids      = _doc_ids,
+                                linked_by    = None,
+                                context_note = (
+                                    f"Linked via email pipeline (inline issue #{_seq_idx - 1}), "
+                                    f"inv={_inv_num or 'n/a'} ref={_doc_ref or 'n/a'}"
+                                ),
+                            )
+                            logger.info(
+                                f"[email_id={email_id}] inline dispute_id={_iid}: "
+                                f"linked {len(_doc_ids)} AR doc(s)"
+                            )
+                except Exception as _ar_outer:
+                    logger.warning(
+                        f"[email_id={email_id}] inline[{_seq_idx}] AR link failed "
+                        f"(non-fatal): {_ar_outer}"
+                    )
 
             # For each inline dispute: resolve its token, write its own analysis + episode
             for seq_idx, iid in enumerate(inline_dispute_ids, 2):
@@ -960,77 +1142,12 @@ async def node_persist_results(
             except Exception as emb_err:
                 logger.warning(f"[email_id={email_id}] Embedding save failed: {emb_err}")
 
-        # ── 9b. Create FORKED disputes (context-shift follow-up) ──────────────
+        # ── 9b. Context-shift fork (removed — FA-driven recommendation system) ─
+        # detect_context_shift.py now writes DisputeForkRecommendation rows
+        # instead of setting context_shift_detected=True.  The FA accepts or
+        # dismisses recommendations via the dispute overview tab.  No automatic
+        # dispute creation happens here.
         forked_ids: List[int] = []
-        if state.get("context_shift_detected") and state.get("forked_issues"):
-            forked_ids = await _persist_forked_disputes(
-                db_session,
-                parent_dispute_id=dispute_id,
-                forked_issues=state["forked_issues"],
-                email_id=email_id,
-                customer_id=state.get("customer_id") or "unknown",
-            )
-            logger.info(
-                f"[email_id={email_id}] Context shift: created {len(forked_ids)} "
-                f"forked dispute(s): {forked_ids}"
-            )
-
-            # Send a fresh-thread notification email for each forked dispute.
-            # No In-Reply-To header — this intentionally starts a new thread so
-            # the customer sees a distinct conversation for the new dispute.
-            from src.core.services.outbound_email_service import OutboundEmailService
-            _fork_svc = OutboundEmailService(db_session)
-            for _fork_id in forked_ids:
-                try:
-                    _fork_dispute = await _fork_svc.disp_repo.get_by_id(_fork_id)
-                    _fork_token   = getattr(_fork_dispute, "dispute_token", f"PV-{_fork_id:05d}")
-                    _fork_type    = state.get("dispute_type_name") or "Payment Dispute"
-                    _fork_subject = f"[{_fork_token}] {_fork_type}"
-                    _fork_body    = (
-                        f"Dear Customer,\n\n"
-                        f"Thank you for getting in touch. We have logged a new case "
-                        f"based on your recent message.\n\n"
-                        f"Your case reference: {_fork_token}\n\n"
-                        f"Please quote this reference in any future correspondence "
-                        f"regarding this matter. Our team will review and be in touch shortly.\n\n"
-                        f"Regards,\n"
-                        f"Accounts Receivable Team\n\n"
-                        f"Do Not Reply to this email. This is an Auto Generated Response."
-                    )
-                    await _fork_svc.compose_and_send(
-                        dispute_id=_fork_id,
-                        sent_by_user_id=None,
-                        to_email=state["sender_email"],
-                        subject=_fork_subject,
-                        body_html="<p>" + _fork_body.replace("\n", "<br/>") + "</p>",
-                        body_text=_fork_body,
-                        reply_to_message_id=None,   # fresh thread — no In-Reply-To
-                        force_new_thread=True,
-                        attachments=[],
-                        override_smtp_credentials=_build_agent_smtp_override(),
-                    )
-                    logger.info(
-                        f"[email_id={email_id}] Fresh-thread notification sent "
-                        f"for forked dispute_id={_fork_id} token={_fork_token}"
-                    )
-                except Exception as _fork_mail_err:
-                    logger.error(
-                        f"[email_id={email_id}] Fork notification email failed "
-                        f"for dispute_id={_fork_id}: {_fork_mail_err}",
-                        exc_info=True,
-                    )
-
-            if state.get("context_shift_reasoning"):
-                db_session.add(DisputeActivityLog(
-                    dispute_id=dispute_id,
-                    action_type="CONTEXT_SHIFT_DETECTED",
-                    notes=(
-                        f"AI detected context shift (confidence="
-                        f"{state.get('context_shift_confidence', 0):.0%}). "
-                        f"Reason: {state['context_shift_reasoning']}. "
-                        f"Forked: {forked_ids}."
-                    ),
-                ))
 
         # ── 9c. Attach existing DisputeDocuments from the same customer/domain ──
         # When a dispute is first created for a customer, any previously uploaded

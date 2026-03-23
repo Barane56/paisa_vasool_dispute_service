@@ -84,8 +84,12 @@
     ───────────────────────────────────────────────────────────────
     ALL THREE conditions must be true to split. If any one is false → ONE ticket.
 
-      A. The email references TWO OR MORE DIFFERENT invoice numbers AND
-         each invoice has a distinct, unrelated problem.
+      A. The email references TWO OR MORE DIFFERENT AR document identifiers
+         (invoice numbers, PO numbers, GRN numbers, payment references, or
+         contract numbers) AND each has a distinct, unrelated problem.
+         Note: an invoice number and the PO number that funded it are the SAME
+         document chain — they do NOT count as two different identifiers for
+         splitting purposes.
 
       B. Each issue requires a DIFFERENT financial action:
          e.g. issue 1 = credit note on INV-X, issue 2 = address correction
@@ -182,6 +186,14 @@
                         Never repeat the same invoice number across issues unless
                         genuinely the same invoice has multiple unrelated problems.
                         null if no invoice number stated for this issue.
+      document_reference : when no invoice_number is present, set this to the
+                        primary AR document reference for this issue — e.g. a PO
+                        number, GRN number, payment reference, or contract number.
+                        Use the exact value as written in the email. null if absent.
+      document_reference_type : the type of document_reference above.
+                        Must be one of: "po_number", "grn_number", "payment_ref",
+                        "contract_number", "credit_note_number".
+                        null when document_reference is null.
       disputed_amount : amount withheld/disputed for this issue, or null
       priority        : "LOW", "MEDIUM", or "HIGH"
 
@@ -195,6 +207,8 @@
     "intent":             "one intent from the list above",
     "description":        "short customer-facing clause",
     "invoice_number":     "INV-XXXX or null",
+    "document_reference": "PO-XXXX or GRN-XXXX or null",
+    "document_reference_type": "po_number|grn_number|payment_ref|contract_number|credit_note_number or null",
     "disputed_amount":    "INR X,XX,XXX or null",
     "priority":           "LOW" or "MEDIUM" or "HIGH",
     "requires_new_case":  true or false,

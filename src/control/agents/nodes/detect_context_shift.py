@@ -291,60 +291,61 @@ async def node_detect_context_shift(
             "original_dispute_still_active": True,
         }
 
-    # ── Low confidence — flag for FA but do NOT auto-fork ────────────────────
-    if confidence < CONFIDENCE_THRESHOLD:
-        logger.info(
-            f"[email_id={email_id}] detect_context_shift: shift detected but confidence "
-            f"{confidence:.2f} < threshold {CONFIDENCE_THRESHOLD} — "
-            "flagging for FA review instead of auto-forking"
-        )
-        # Surface as an FA question so the agent surfaces it in the response
-        fa_note = (
-            f"[CONTEXT SHIFT SUSPECTED — LOW CONFIDENCE {confidence:.0%}] "
-            f"{reasoning or 'No explanation provided.'} "
-            f"Possible new issue(s): "
-            + "; ".join(
-                f"{i['type_hint']} (inv: {i['invoice_number'] or 'unknown'})"
-                for i in normalised_issues
-            )
-            + " — please review and fork manually if appropriate."
-        )
-        langfuse_context.update_current_observation(
-            output={"is_context_shift": True, "confidence": confidence,
-                    "action": "flagged_for_fa", "new_issues_count": len(normalised_issues)}
-        )
-        # Inject FA note into questions_to_ask so it reaches the FA dashboard
-        existing_questions = list(state.get("questions_to_ask") or [])
-        return {
-            **state,
-            "context_shift_detected":      False,   # not auto-forking
-            "context_shift_confidence":    confidence,
-            "context_shift_reasoning":     reasoning,
-            "forked_issues":               [],
-            "original_dispute_still_active": True,
-            "questions_to_ask":            existing_questions + [fa_note],
-        }
-
-    # ── High confidence shift — proceed with auto-fork ───────────────────────
+    # ── Low OR high confidence shift — write FA recommendation ───────────────
+    # Both paths write DisputeForkRecommendation rows.
+    # Low confidence = amber card with lower confidence badge.
+    # High confidence = amber card with higher confidence badge.
+    # The FA decides in both cases — we never auto-fork.
     logger.info(
-        f"[email_id={email_id}] detect_context_shift: CONTEXT SHIFT CONFIRMED "
-        f"(confidence={confidence:.2f}, issues={len(normalised_issues)}) — "
-        f"existing_dispute_id={existing_id}, original_still_active={original_still_active}"
+        f"[email_id={email_id}] detect_context_shift: context shift detected "
+        f"(confidence={confidence:.2f}) — writing FA recommendation(s) for "
+        f"dispute_id={existing_id}"
     )
+
+    if db_session:
+        try:
+            from src.data.models.postgres.dispute_models import DisputeForkRecommendation
+            for issue in normalised_issues:
+                rec = DisputeForkRecommendation(
+                    dispute_id               = existing_id,
+                    email_id                 = email_id,
+                    confidence               = confidence,
+                    reasoning                = reasoning,
+                    suggested_invoice_number = issue.get("invoice_number"),
+                    suggested_type_hint      = issue.get("type_hint"),
+                    suggested_description    = issue.get("description"),
+                    suggested_priority       = issue.get("priority", "MEDIUM"),
+                    status                   = "PENDING",
+                )
+                db_session.add(rec)
+            await db_session.flush()
+            logger.info(
+                f"[email_id={email_id}] Wrote {len(normalised_issues)} fork "
+                f"recommendation(s) for dispute_id={existing_id}"
+            )
+        except Exception as rec_err:
+            logger.warning(
+                f"[email_id={email_id}] Could not write fork recommendations "
+                f"(non-fatal): {rec_err}"
+            )
+
     langfuse_context.update_current_observation(
         output={
             "is_context_shift":           True,
             "confidence":                 confidence,
             "new_issues_count":           len(normalised_issues),
-            "original_dispute_still_active": original_still_active,
+            "action":                     "recommendation_written",
+            "original_dispute_still_active": True,
         }
     )
 
+    # Return context_shift_detected=False so persist_results never auto-forks.
+    # The recommendations are visible via GET /disputes/{id}/fork-recommendations.
     return {
         **state,
-        "context_shift_detected":      True,
-        "context_shift_confidence":    confidence,
-        "context_shift_reasoning":     reasoning,
-        "forked_issues":               normalised_issues,
-        "original_dispute_still_active": original_still_active,
+        "context_shift_detected":        False,
+        "context_shift_confidence":      confidence,
+        "context_shift_reasoning":       reasoning,
+        "forked_issues":                 [],
+        "original_dispute_still_active": True,
     }

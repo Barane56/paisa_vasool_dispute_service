@@ -4,7 +4,7 @@
 #                     DisputeActivityLog, DisputeStatusHistory
 from sqlalchemy import (
     Column, Enum, Integer, String, Text, Boolean, Numeric, BigInteger,
-    TIMESTAMP, ForeignKey, Index, func, text,
+    TIMESTAMP, ForeignKey, Index, func, text,Float,
     Enum as SQLEnum,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -279,4 +279,47 @@ class DisputeDocument(Base):
         Index("ix_dispute_documents_dispute_id",  "dispute_id"),
         Index("ix_dispute_documents_uploaded_by", "uploaded_by"),
         Index("ix_dispute_documents_created_at",  "created_at"),
+    )
+
+
+class DisputeForkRecommendation(Base):
+    """
+    AI-generated recommendation to split a dispute thread into a new case.
+
+    Instead of auto-forking, the pipeline writes a recommendation here.
+    The FA sees it on the overview tab and can ACCEPT (creates new case) or
+    DISMISS (hides it permanently).
+
+    status:
+      PENDING   — waiting for FA decision
+      ACCEPTED  — FA clicked "Create Case"; new_dispute_id is set
+      DISMISSED — FA dismissed; never shown again
+    """
+    __tablename__ = "dispute_fork_recommendations"
+
+    recommendation_id  = Column(Integer,     primary_key=True)
+    dispute_id         = Column(Integer,     ForeignKey("dispute_master.dispute_id", ondelete="CASCADE"), nullable=False)
+    email_id           = Column(Integer,     ForeignKey("email_inbox.email_id",      ondelete="SET NULL"), nullable=True)
+    confidence         = Column(Float,       nullable=False, default=0.0)
+    reasoning          = Column(Text,        nullable=True)
+    # Pre-filled data for the new case modal
+    suggested_invoice_number = Column(String(100), nullable=True)
+    suggested_type_hint      = Column(String(200), nullable=True)
+    suggested_description    = Column(Text,        nullable=True)
+    suggested_priority       = Column(String(20),  nullable=False, default="MEDIUM")
+    # Outcome
+    status             = Column(String(20),  nullable=False, default="PENDING")  # PENDING|ACCEPTED|DISMISSED
+    new_dispute_id     = Column(Integer,     ForeignKey("dispute_master.dispute_id", ondelete="SET NULL"), nullable=True)
+    actioned_by        = Column(Integer,     ForeignKey("users.user_id",             ondelete="SET NULL"), nullable=True)
+    actioned_at        = Column(TIMESTAMP(timezone=True), nullable=True)
+    created_at         = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    dispute     = relationship("DisputeMaster", foreign_keys=[dispute_id],   lazy="select")
+    new_dispute = relationship("DisputeMaster", foreign_keys=[new_dispute_id], lazy="select")
+    actioned_by_user = relationship("User",     foreign_keys=[actioned_by],  lazy="joined")
+
+    __table_args__ = (
+        Index("ix_dfr_dispute_id", "dispute_id"),
+        Index("ix_dfr_status",     "status"),
+        Index("ix_dfr_created_at", "created_at"),
     )

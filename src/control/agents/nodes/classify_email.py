@@ -74,6 +74,19 @@ def _safe_suggested_action(v: Any) -> str:
     return "CREATE_CASE"
 
 
+_VALID_DOC_REF_TYPES = frozenset({
+    "po_number", "grn_number", "payment_ref",
+    "contract_number", "credit_note_number",
+})
+
+
+def _safe_doc_ref_type(v: Any) -> Optional[str]:
+    """Return a validated document_reference_type or None."""
+    if isinstance(v, str) and v.lower() in _VALID_DOC_REF_TYPES:
+        return v.lower()
+    return None
+
+
 def _derive_flags_from_intent(intent: str, llm_flags: dict) -> dict:
     """
     Merge LLM-provided flags with hard-coded rules per intent.
@@ -254,6 +267,17 @@ async def node_classify_email(
     primary_priority        = _safe_priority(structure_data.get("priority"))
     primary_invoice_number  = (structure_data.get("invoice_number") or "").strip() or None
     primary_disputed_amount = (structure_data.get("disputed_amount") or "").strip() or None
+    # Non-invoice AR document reference for primary issue (PO, GRN, etc.)
+    primary_doc_reference      = (structure_data.get("document_reference") or "").strip() or None
+    primary_doc_reference_type = _safe_doc_ref_type(structure_data.get("document_reference_type"))
+    # If the LLM set document_reference but not document_reference_type, discard both
+    # to avoid sending an untyped reference downstream.
+    if primary_doc_reference and not primary_doc_reference_type:
+        logger.warning(
+            f"[email_id={state['email_id']}] primary issue has document_reference "
+            f"'{primary_doc_reference}' but missing/invalid document_reference_type — discarding"
+        )
+        primary_doc_reference = None
 
     raw_additional = structure_data.get("additional_issues") or []
     # Validate additional issues — each needs at minimum a description
@@ -265,12 +289,24 @@ async def node_classify_email(
         if not desc:
             logger.warning(f"[email_id={state['email_id']}] additional_issue[{idx}] has no description, skipped")
             continue
+        doc_ref      = (raw.get("document_reference") or "").strip() or None
+        doc_ref_type = _safe_doc_ref_type(raw.get("document_reference_type"))
+        # Discard document_reference when no valid type accompanies it
+        if doc_ref and not doc_ref_type:
+            logger.warning(
+                f"[email_id={state['email_id']}] additional_issue[{idx}] has "
+                f"document_reference '{doc_ref}' but missing/invalid "
+                f"document_reference_type — discarding"
+            )
+            doc_ref = None
         structured_additional.append({
-            "classification":  _safe_classification(raw.get("classification")),
-            "description":     desc,
-            "invoice_number":  (raw.get("invoice_number") or "").strip() or None,
-            "disputed_amount": (raw.get("disputed_amount") or "").strip() or None,
-            "priority":        _safe_priority(raw.get("priority")),
+            "classification":          _safe_classification(raw.get("classification")),
+            "description":             desc,
+            "invoice_number":          (raw.get("invoice_number") or "").strip() or None,
+            "document_reference":      doc_ref,
+            "document_reference_type": doc_ref_type,
+            "disputed_amount":         (raw.get("disputed_amount") or "").strip() or None,
+            "priority":                _safe_priority(raw.get("priority")),
         })
 
     total_issues = 1 + len(structured_additional)
@@ -305,12 +341,12 @@ async def node_classify_email(
             label=f"additional[{idx}]",
         )
         inline_issues.append({
-            **issue,
-            "dispute_type_name":    type_data["dispute_type_name"],
-            "is_new_type":          type_data["is_new_type"],
-            "new_type_description": type_data["new_type_description"],
-            "new_type_severity":    type_data["new_type_severity"],
-        })
+                **issue,
+                "dispute_type_name":    type_data["dispute_type_name"],
+                "is_new_type":          type_data["is_new_type"],
+                "new_type_description": type_data["new_type_description"],
+                "new_type_severity":    type_data["new_type_severity"],
+            })
 
     # Build _new_dispute_type for the primary if needed
     new_dispute_type = None
@@ -360,6 +396,8 @@ async def node_classify_email(
         "priority":                   intent_flags["priority_override"] or primary_priority,
         "description":                primary_description,
         "invoice_number":             primary_invoice_number,
+        "document_reference":         primary_doc_reference,
+        "document_reference_type":    primary_doc_reference_type,
         "disputed_amount":            primary_disputed_amount,
         "_answers_pending_questions": [],
         "_new_dispute_type":          new_dispute_type,

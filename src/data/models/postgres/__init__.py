@@ -7,8 +7,11 @@ from .dispute_models import (
     DisputeAIAnalysis, AnalysisSupportingRef,
     DisputeAssignment, DisputeOpenQuestion,
     DisputeActivityLog, DisputeStatusHistory,
+    DisputeNewMessage, DisputeDocument,
+    DisputeForkRecommendation,
 )
-from .memory_models  import DisputeMemoryEpisode, DisputeMemorySummary
+from .memory_models      import DisputeMemoryEpisode, DisputeMemorySummary
+from .ar_document_models import ARDocument, ARDocumentKey, DisputeARDocument
 
 __all__ = [
     "Base",
@@ -19,5 +22,8 @@ __all__ = [
     "DisputeAIAnalysis", "AnalysisSupportingRef",
     "DisputeAssignment", "DisputeOpenQuestion",
     "DisputeActivityLog", "DisputeStatusHistory",
+    "DisputeNewMessage", "DisputeDocument",
+    "DisputeForkRecommendation",
     "DisputeMemoryEpisode", "DisputeMemorySummary",
+    "ARDocument", "ARDocumentKey", "DisputeARDocument",
 ]

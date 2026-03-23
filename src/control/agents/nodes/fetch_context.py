@@ -224,6 +224,81 @@ async def node_fetch_context(
         }
     )
 
+    # ── AR Document chain — graph query via shared reference keys ───────────
+    #
+    # Priority:
+    #   1. matched_invoice_number → inv_number key (most reliable anchor)
+    #   2. candidate_references   → po_number / grn_number / payment_ref / etc.
+    #      Tried in order; first non-empty result wins.  Only attempted when
+    #      the invoice walk found nothing.
+    #
+    # The outer try guards against import/setup errors.
+    # Each inner try is independent so one bad reference never blocks another.
+    ar_document_chain: list = []
+
+    if state.get("customer_id"):
+        try:
+            from src.core.services.ar_document_service import (
+                ARDocumentService, resolve_customer_scope,
+            )
+            ar_svc = ARDocumentService(db_session)
+            scope  = resolve_customer_scope(state["customer_id"])
+
+            # Path 1 — invoice number
+            if state.get("matched_invoice_number"):
+                try:
+                    chain = await ar_svc.get_document_chain_for_invoice(
+                        invoice_number = state["matched_invoice_number"],
+                        customer_scope = scope,
+                    )
+                    if chain:
+                        ar_document_chain = chain
+                        logger.info(
+                            f"[email_id={state['email_id']}] AR graph (inv_number): "
+                            f"{len(chain)} doc(s) for "
+                            f"invoice={state['matched_invoice_number']}: "
+                            f"{[d['doc_type'] for d in chain]}"
+                        )
+                except Exception as inv_walk_err:
+                    logger.warning(
+                        f"[email_id={state['email_id']}] AR graph inv-walk failed "
+                        f"(non-fatal): {inv_walk_err}"
+                    )
+
+            # Path 2 — fallback: any other reference extracted from the email
+            if not ar_document_chain:
+                for ref in (state.get("candidate_references") or []):
+                    ref_value = (ref.get("value") or "").strip()
+                    key_type  = (ref.get("key_type") or "").strip()
+                    if not ref_value or not key_type:
+                        continue
+                    try:
+                        chain = await ar_svc.get_document_chain_for_reference(
+                            ref_value      = ref_value,
+                            key_type       = key_type,
+                            customer_scope = scope,
+                        )
+                        if chain:
+                            ar_document_chain = chain
+                            logger.info(
+                                f"[email_id={state['email_id']}] AR graph "
+                                f"({key_type}={ref_value}): {len(chain)} doc(s): "
+                                f"{[d['doc_type'] for d in chain]}"
+                            )
+                            break  # first hit wins
+                    except Exception as ref_walk_err:
+                        logger.warning(
+                            f"[email_id={state['email_id']}] AR graph ref-walk failed "
+                            f"for {key_type}={ref_value!r} (non-fatal): {ref_walk_err}"
+                        )
+                        # continue to next reference
+
+        except Exception as ar_outer_err:
+            logger.warning(
+                f"[email_id={state['email_id']}] AR graph setup failed "
+                f"(non-fatal): {ar_outer_err}"
+            )
+
     return {
         **state,
         "invoice_details":     invoice_details,
@@ -232,4 +307,5 @@ async def node_fetch_context(
         "memory_summary":      memory_summary,
         "recent_episodes":     recent_episodes,
         "pending_questions":   pending_questions,
+        "ar_document_chain":   ar_document_chain,
     }
