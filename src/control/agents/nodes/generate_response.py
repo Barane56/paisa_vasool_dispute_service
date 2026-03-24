@@ -46,11 +46,11 @@ def _sanitise_dispute_token(ai_response: str, expected_token: str) -> str:
     Replace any LLM-hallucinated dispute reference IDs with the correct placeholder.
 
     Catches all known hallucination patterns:
-      DISP-00001        (our real format)
+      PV-00001          (our real format)
       DISPUTE-2025-001  (LLM makes up year-based references)
       DISPUTE-001       (LLM shortens it)
       REF-2025-001      (LLM uses REF prefix)
-      DISP-2025-001     (LLM mixes formats)
+      PV-2025-001       (LLM mixes formats)
     """
     if expected_token != "{DISPUTE_TOKEN}":
         return ai_response
@@ -58,7 +58,7 @@ def _sanitise_dispute_token(ai_response: str, expected_token: str) -> str:
     # Broad pattern: any word starting with DISP or DISPUTE or REF followed by
     # digits and hyphens — covers all known hallucination styles
     sanitised = re.sub(
-        r'\b(?:DISPUTE|DISP|REF)[-_](?:\d{4}[-_])?\d{1,6}\b',
+        r'\b(?:DISPUTE|DISP|PV|REF)[-_](?:\d{4}[-_])?\d{1,6}\b',
         "{DISPUTE_TOKEN}",
         ai_response,
         flags=re.IGNORECASE,
@@ -137,6 +137,8 @@ async def _call_llm_for_issue(
     is_focused_issue: bool = False,
     focus_invoice_number: Optional[str] = None,
     attachment_metadata: Optional[List[Dict]] = None,
+    ar_document_chain: Optional[List[Dict]] = None,
+    related_dispute_token: Optional[str] = None,
 ) -> Dict:
     """
     Run one full generate_response.poml LLM call for a single issue.
@@ -161,6 +163,8 @@ async def _call_llm_for_issue(
         is_focused_issue=is_focused_issue,
         focus_invoice_number=focus_invoice_number,
         attachment_metadata=attachment_metadata,
+        ar_document_chain=ar_document_chain,
+        related_dispute_token=related_dispute_token,
     )
 
     try:
@@ -212,7 +216,7 @@ async def _call_llm_for_issue(
                 f"Dear Customer,\n\n"
                 f"Thank you for reaching out. We have logged your query and our "
                 f"Finance team will follow up within 1-2 business days.\n\n"
-                f"Your reference: {dispute_token}\n\n"
+                f"Your case reference: {dispute_token}\n\n"
                 f"Please quote this in all future correspondence.\n\n"
                 f"Regards,\nAccounts Receivable Team"
             ),
@@ -299,8 +303,53 @@ async def node_generate_ai_response(
 
     existing_dispute_id = state.get("existing_dispute_id")
     dispute_token       = (
-        f"DISP-{existing_dispute_id:05d}" if existing_dispute_id else "{DISPUTE_TOKEN}"
+        f"PV-{existing_dispute_id:05d}" if existing_dispute_id else "{DISPUTE_TOKEN}"
     )
+
+    # ── Intent fast paths — no LLM call for non-billable intents ─────────────
+    intent = state.get("intent", "UNKNOWN")
+
+    _FAST_RESPONSE_MAP = {
+        "SOCIAL": (
+            "Thank you for reaching out! We'll keep you updated on any open matters. "
+            "Feel free to reply here if you have any questions."
+        ),
+        "IRRELEVANT": None,   # No reply
+        "RESOLUTION_ACK": (
+            "Thank you for letting us know — we're glad this has been resolved. "
+            "Please don't hesitate to reach out if you need anything further."
+        ),
+        "PAYMENT_ADVICE": (
+            "Thank you for the payment notification. We will apply it to your account "
+            "and confirm once it has been processed."
+        ),
+        "DUPLICATE_CONTACT": (
+            "Thank you for following up. Our team is reviewing your case and will be in touch shortly."
+        ),
+    }
+
+    if intent in _FAST_RESPONSE_MAP:
+        fast_response = _FAST_RESPONSE_MAP[intent]
+        logger.info(f"[email_id={email_id}] Intent={intent} — using fast response path")
+        return {
+            **state,
+            "ai_summary":            f"Customer sent a {intent.lower().replace('_', ' ')} message.",
+            "ai_response":           fast_response,
+            "confidence_score":      1.0,
+            "auto_response_generated": fast_response is not None,
+            "questions_to_ask":      [],
+            "memory_context_used":   False,
+            "episodes_referenced":   [],
+            "per_issue_responses":   [{
+                "issue_index":       0,
+                "ai_response":       fast_response,
+                "can_auto_respond":  fast_response is not None,
+                "ai_summary":        f"{intent} message",
+                "confidence_score":  1.0,
+                "questions_to_ask":  [],
+                "dispute_token":     "{DISPUTE_TOKEN}",
+            }],
+        }
 
     # ── Single-issue path ─────────────────────────────────────────────────────
     if not has_inline:
@@ -323,6 +372,8 @@ async def node_generate_ai_response(
             email_id=email_id,
             is_focused_issue=False,
             attachment_metadata=state.get("attachment_metadata"),
+            ar_document_chain=state.get("ar_document_chain") or [],
+            related_dispute_token=state.get("related_dispute_token"),
         )
         langfuse_context.update_current_observation(
             input={"prompt_name": RESPONSE_PROMPT_NAME, "prompt_version": RESPONSE_PROMPT_VERSION},
@@ -350,29 +401,112 @@ async def node_generate_ai_response(
     #
     all_issues_spec = [
         {
-            "issue_index":      0,
-            "classification":   state.get("classification", "CLARIFICATION"),
-            "dispute_type_name": state.get("dispute_type_name", ""),
-            "priority":         state.get("priority", "MEDIUM"),
-            "description":      state.get("description", ""),
-            "invoice_number":   state.get("invoice_number"),
-            "dispute_token":    "{DISPUTE_TOKEN}",
+            "issue_index":             0,
+            "classification":          state.get("classification", "CLARIFICATION"),
+            "dispute_type_name":       state.get("dispute_type_name", ""),
+            "priority":                state.get("priority", "MEDIUM"),
+            "description":             state.get("description", ""),
+            "invoice_number":          state.get("invoice_number"),
+            "document_reference":      state.get("document_reference"),
+            "document_reference_type": state.get("document_reference_type"),
+            "dispute_token":           "{DISPUTE_TOKEN}",
         }
     ]
-    # print(all_issues_spec)
     for seq, iss in enumerate(inline_issues, 2):
         all_issues_spec.append({
-            "issue_index":      seq - 1,
-            "classification":   iss.get("classification", "CLARIFICATION"),
-            "dispute_type_name": iss.get("dispute_type_name", ""),
-            "priority":         iss.get("priority", "MEDIUM"),
-            "description":      iss.get("description", ""),
-            "invoice_number":   iss.get("invoice_number"),
-            "dispute_token":    f"{{DISPUTE_TOKEN_{seq}}}",
+            "issue_index":             seq - 1,
+            "classification":          iss.get("classification", "CLARIFICATION"),
+            "dispute_type_name":       iss.get("dispute_type_name", ""),
+            "priority":                iss.get("priority", "MEDIUM"),
+            "description":             iss.get("description", ""),
+            "invoice_number":          iss.get("invoice_number"),
+            "document_reference":      iss.get("document_reference"),
+            "document_reference_type": iss.get("document_reference_type"),
+            "dispute_token":           f"{{DISPUTE_TOKEN_{seq}}}",
         })
     # print(all_issues_spec)
     per_issue_responses: List[Dict] = []
     all_fa_questions:    List[str]  = []
+
+    # Pre-build a cache: lookup_key → ar_document_chain
+    # Keyed by (invoice_number or document_reference, key_type) so we only
+    # hit the DB once per unique reference across all issues.
+    _ar_chain_cache: Dict[tuple, List[Dict]] = {}
+    # Seed with primary chain already fetched in fetch_context
+    primary_inv_num = state.get("matched_invoice_number")
+    if primary_inv_num:
+        _ar_chain_cache[("inv_number", primary_inv_num)] = state.get("ar_document_chain") or []
+
+    async def _fetch_ar_chain_for_issue(
+        invoice_number:          Optional[str],
+        document_reference:      Optional[str] = None,
+        document_reference_type: Optional[str] = None,
+    ) -> List[Dict]:
+        """
+        Fetch ar_document_chain for a single issue with caching.
+
+        Priority:
+          1. invoice_number  → get_document_chain_for_invoice
+          2. document_reference + document_reference_type → get_document_chain_for_reference
+
+        Returns [] on any error — never raises.
+        """
+        if not db_session:
+            return []
+
+        # Determine which lookup to perform
+        if invoice_number:
+            cache_key = ("inv_number", invoice_number)
+        elif document_reference and document_reference_type:
+            cache_key = (document_reference_type, document_reference)
+        else:
+            return []
+
+        if cache_key in _ar_chain_cache:
+            return _ar_chain_cache[cache_key]
+
+        try:
+            from src.core.services.ar_document_service import (
+                ARDocumentService, resolve_customer_scope,
+            )
+            ar_svc = ARDocumentService(db_session)
+            scope  = resolve_customer_scope(
+                state.get("sender_email") or state.get("customer_id") or ""
+            )
+
+            if invoice_number:
+                chain = await ar_svc.get_document_chain_for_invoice(
+                    invoice_number = invoice_number,
+                    customer_scope = scope,
+                )
+            else:
+                chain = await ar_svc.get_document_chain_for_reference(
+                    ref_value      = document_reference,
+                    key_type       = document_reference_type,
+                    customer_scope = scope,
+                )
+
+            _ar_chain_cache[cache_key] = chain
+            if chain:
+                label = (
+                    f"invoice={invoice_number}"
+                    if invoice_number
+                    else f"{document_reference_type}={document_reference}"
+                )
+                logger.info(
+                    f"[email_id={email_id}] AR graph (multi-issue): "
+                    f"{len(chain)} doc(s) for {label}: "
+                    f"{[d['doc_type'] for d in chain]}"
+                )
+            return chain
+
+        except Exception as ar_err:
+            logger.warning(
+                f"[email_id={email_id}] AR graph multi-issue fetch failed "
+                f"for cache_key={cache_key!r} (non-fatal): {ar_err}"
+            )
+            _ar_chain_cache[cache_key] = []   # don't retry the same key
+            return []
 
     for spec in all_issues_spec:
         inv_ctx, pay_ctx = await _fetch_issue_context(
@@ -382,7 +516,11 @@ async def node_generate_ai_response(
             fallback_payment_details=state.get("all_payment_details") or [],
         )
 
-        # print(inv_ctx, pay_ctx)
+        ar_chain_for_issue = await _fetch_ar_chain_for_issue(
+            invoice_number          = spec.get("invoice_number"),
+            document_reference      = spec.get("document_reference"),
+            document_reference_type = spec.get("document_reference_type"),
+        )
 
         result = await _call_llm_for_issue(
             llm_client=llm_client,
@@ -404,6 +542,8 @@ async def node_generate_ai_response(
             is_focused_issue=True,
             focus_invoice_number=spec.get("invoice_number"),
             attachment_metadata=state.get("attachment_metadata"),
+            ar_document_chain=ar_chain_for_issue,
+            related_dispute_token=state.get("related_dispute_token"),
         )
         per_issue_responses.append(result)
         all_fa_questions.extend(result.get("questions_to_ask") or [])

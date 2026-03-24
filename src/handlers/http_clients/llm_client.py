@@ -91,6 +91,13 @@ class LLMClient:
     # Generic chat                                                        #
     # ------------------------------------------------------------------ #
     async def chat(self, prompt: str, system: str = None, json_mode: bool = True) -> str:
+        """
+        Generic chat using the 70b model.
+
+        Handles Groq's json_validate_failed (400) gracefully: when the model
+        produces structurally invalid JSON (e.g. ai_response as an object instead
+        of a string), we send a correction turn and retry once before raising.
+        """
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
@@ -105,12 +112,40 @@ class LLMClient:
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
-        try:
-            response = await self.client.chat.completions.create(**kwargs)
-            return response.choices[0].message.content
-        except Exception as e:
-            logger.error(f"Groq chat error: {e}")
-            raise LLMError(f"Groq API request failed: {e}")
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = await self.client.chat.completions.create(**kwargs)
+                return response.choices[0].message.content
+            except Exception as e:
+                err_str = str(e)
+                # Groq returns 400 json_validate_failed when the model puts
+                # ai_response as a JSON object instead of a plain string.
+                # Extract the failed_generation and send a correction turn.
+                if "json_validate_failed" in err_str and attempt < max_attempts:
+                    logger.warning(
+                        f"Groq json_validate_failed on attempt {attempt} — "
+                        "sending correction turn and retrying."
+                    )
+                    # Extract what the model tried to send so it can self-correct
+                    import re as _re
+                    bad_match = _re.search(r"'failed_generation': '(.*?)'(?:,|\})", err_str, _re.DOTALL)
+                    bad_output = bad_match.group(1) if bad_match else "(see previous attempt)"
+                    messages = [
+                        *messages,
+                        {"role": "assistant", "content": bad_output},
+                        {"role": "user", "content": (
+                            "Your previous response was rejected because ai_response "
+                            "was a JSON object instead of a plain string. "
+                            "ai_response MUST be a single JSON string with \\n for line breaks — "
+                            "NOT a nested object or array. "
+                            "Return the corrected JSON now with ai_response as a plain string."
+                        )},
+                    ]
+                    kwargs["messages"] = messages
+                    continue
+                logger.error(f"Groq chat error: {e}")
+                raise LLMError(f"Groq API request failed: {e}")
 
     # ------------------------------------------------------------------ #
     # Fast chat — uses 8b model for simple classify/extract/detect tasks  #

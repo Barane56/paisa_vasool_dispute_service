@@ -12,6 +12,8 @@ Pipeline:
       ↓
   resolve_token           ← Layer 1: scan subject/body for [DISP-XXXXX] token
       ↓
+  pre_fetch_dispute_context ← NEW: if token matched, pull existing dispute
+      ↓                        description+type so classify_email can compare
   classify_email          ← sets dispute_type before context fetch
       ↓
   fetch_context           ← 4-level dispute lookup + memory load
@@ -40,6 +42,7 @@ from src.control.agents.nodes import (
     node_extract_invoice_data_via_groq,
     node_identify_invoice,
     node_resolve_token,
+    node_pre_fetch_dispute_context,
     node_classify_email,
     node_fetch_context,
     node_embed_and_search,
@@ -58,6 +61,7 @@ def build_email_processing_graph(db_session=None, llm_client=None):
     graph.add_node("extract_invoice_data_via_groq",  partial(node_extract_invoice_data_via_groq,  llm_client=llm_client))
     graph.add_node("identify_invoice",               partial(node_identify_invoice,               db_session=db_session))
     graph.add_node("resolve_token",                  partial(node_resolve_token,                  db_session=db_session))
+    graph.add_node("pre_fetch_dispute_context",      partial(node_pre_fetch_dispute_context,      db_session=db_session))
     graph.add_node("classify_email",                 partial(node_classify_email,                 llm_client=llm_client, db_session=db_session))
     graph.add_node("fetch_context",                  partial(node_fetch_context,                  db_session=db_session))
     graph.add_node("embed_and_search",               partial(node_embed_and_search,               llm_client=llm_client, db_session=db_session))
@@ -70,10 +74,11 @@ def build_email_processing_graph(db_session=None, llm_client=None):
     graph.add_edge("extract_text",                  "extract_invoice_data_via_groq")
     graph.add_edge("extract_invoice_data_via_groq", "identify_invoice")
     graph.add_edge("identify_invoice",              "resolve_token")
-    graph.add_edge("resolve_token",                 "classify_email")
+    graph.add_edge("resolve_token",                 "pre_fetch_dispute_context")   # ← NEW
+    graph.add_edge("pre_fetch_dispute_context",     "classify_email")              # ← NEW
     graph.add_edge("classify_email",                "fetch_context")
     graph.add_edge("fetch_context",                 "embed_and_search")
-    graph.add_edge("embed_and_search",              "detect_context_shift")   # ← NEW
+    graph.add_edge("embed_and_search",              "detect_context_shift")
     graph.add_edge("detect_context_shift",          "resolve_dispute_link")
     graph.add_edge("resolve_dispute_link",          "generate_ai_response")
     graph.add_edge("generate_ai_response",          "persist_results")

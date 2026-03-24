@@ -102,14 +102,34 @@ async def node_detect_context_shift(
     token_matched     = state.get("token_matched_dispute_id") is not None
 
     # ── Gate ─────────────────────────────────────────────────────────────────
-    # No existing dispute → brand-new email, nothing to fork from.
-    # Token-matched        → the customer explicitly referenced this dispute;
-    #                        treat as a definitive continuation.
-    if not existing_id or token_matched:
-        reason = "no existing dispute" if not existing_id else "token-matched (definitive continuation)"
-        logger.debug(f"[email_id={email_id}] detect_context_shift: skipped — {reason}")
+    # Skip when:
+    #   • No existing dispute — brand-new email, nothing to fork from
+    #   • Token-matched — customer explicitly referenced this dispute
+    #   • Intent flag says no fork needed — SOCIAL, IRRELEVANT, etc.
+    #   • requires_fork is explicitly False from the classifier
+    intent         = state.get("intent", "UNKNOWN")
+    requires_fork  = state.get("requires_fork", True)
+
+    # Intents that are never forks — no billing content means nothing to split
+    _NON_FORK_INTENTS = frozenset({
+        "SOCIAL", "IRRELEVANT", "ABUSIVE", "RESOLUTION_ACK",
+        "DUPLICATE_CONTACT", "PAYMENT_ADVICE", "ADVANCE_PAYMENT",
+    })
+
+    skip_reason: str | None = None
+    if not existing_id:
+        skip_reason = "no existing dispute"
+    elif token_matched and not requires_fork:
+        skip_reason = "token-matched and classifier confirmed continuation"
+    elif intent in _NON_FORK_INTENTS:
+        skip_reason = f"intent={intent} never requires a fork"
+    elif not requires_fork:
+        skip_reason = f"classifier set requires_fork=False for intent={intent}"
+
+    if skip_reason:
+        logger.debug(f"[email_id={email_id}] detect_context_shift: skipped — {skip_reason}")
         langfuse_context.update_current_observation(
-            output={"skipped": True, "reason": reason}
+            output={"skipped": True, "reason": skip_reason}
         )
         return {
             **state,
@@ -271,60 +291,87 @@ async def node_detect_context_shift(
             "original_dispute_still_active": True,
         }
 
-    # ── Low confidence — flag for FA but do NOT auto-fork ────────────────────
+    # ── Auto-fork AND write audit recommendation ─────────────────────────────
+    #
+    # Context shifts always auto-create forked disputes.
+    # A DisputeForkRecommendation row is also written (status=ACCEPTED) so the
+    # FA can see the AI's reasoning on the parent dispute's overview tab.
+    # Low-confidence shifts (<0.70) are downgraded to FA-review only (no fork).
     if confidence < CONFIDENCE_THRESHOLD:
         logger.info(
-            f"[email_id={email_id}] detect_context_shift: shift detected but confidence "
-            f"{confidence:.2f} < threshold {CONFIDENCE_THRESHOLD} — "
-            "flagging for FA review instead of auto-forking"
+            f"[email_id={email_id}] detect_context_shift: low-confidence shift "
+            f"({confidence:.2f}) — writing PENDING recommendation, no auto-fork"
         )
-        # Surface as an FA question so the agent surfaces it in the response
-        fa_note = (
-            f"[CONTEXT SHIFT SUSPECTED — LOW CONFIDENCE {confidence:.0%}] "
-            f"{reasoning or 'No explanation provided.'} "
-            f"Possible new issue(s): "
-            + "; ".join(
-                f"{i['type_hint']} (inv: {i['invoice_number'] or 'unknown'})"
-                for i in normalised_issues
-            )
-            + " — please review and fork manually if appropriate."
-        )
+        if db_session:
+            try:
+                from src.data.models.postgres.dispute_models import DisputeForkRecommendation
+                for issue in normalised_issues:
+                    db_session.add(DisputeForkRecommendation(
+                        dispute_id               = existing_id,
+                        email_id                 = email_id,
+                        confidence               = confidence,
+                        reasoning                = reasoning,
+                        suggested_invoice_number = issue.get("invoice_number"),
+                        suggested_type_hint      = issue.get("type_hint"),
+                        suggested_description    = issue.get("description"),
+                        suggested_priority       = issue.get("priority", "MEDIUM"),
+                        status                   = "PENDING",
+                    ))
+                await db_session.flush()
+            except Exception as e:
+                logger.warning(f"[email_id={email_id}] fork rec write failed (non-fatal): {e}")
         langfuse_context.update_current_observation(
-            output={"is_context_shift": True, "confidence": confidence,
-                    "action": "flagged_for_fa", "new_issues_count": len(normalised_issues)}
+            output={"is_context_shift": True, "confidence": confidence, "action": "pending_recommendation"}
         )
-        # Inject FA note into questions_to_ask so it reaches the FA dashboard
-        existing_questions = list(state.get("questions_to_ask") or [])
         return {
             **state,
-            "context_shift_detected":      False,   # not auto-forking
-            "context_shift_confidence":    confidence,
-            "context_shift_reasoning":     reasoning,
-            "forked_issues":               [],
+            "context_shift_detected":        False,
+            "context_shift_confidence":      confidence,
+            "context_shift_reasoning":       reasoning,
+            "forked_issues":                 [],
             "original_dispute_still_active": True,
-            "questions_to_ask":            existing_questions + [fa_note],
         }
 
-    # ── High confidence shift — proceed with auto-fork ───────────────────────
+    # High confidence — auto-fork and log as ACCEPTED recommendation
     logger.info(
         f"[email_id={email_id}] detect_context_shift: CONTEXT SHIFT CONFIRMED "
         f"(confidence={confidence:.2f}, issues={len(normalised_issues)}) — "
-        f"existing_dispute_id={existing_id}, original_still_active={original_still_active}"
+        f"auto-forking for dispute_id={existing_id}"
     )
+    if db_session:
+        try:
+            from src.data.models.postgres.dispute_models import DisputeForkRecommendation
+            for issue in normalised_issues:
+                db_session.add(DisputeForkRecommendation(
+                    dispute_id               = existing_id,
+                    email_id                 = email_id,
+                    confidence               = confidence,
+                    reasoning                = reasoning,
+                    suggested_invoice_number = issue.get("invoice_number"),
+                    suggested_type_hint      = issue.get("type_hint"),
+                    suggested_description    = issue.get("description"),
+                    suggested_priority       = issue.get("priority", "MEDIUM"),
+                    status                   = "ACCEPTED",
+                ))
+            await db_session.flush()
+        except Exception as e:
+            logger.warning(f"[email_id={email_id}] fork rec log failed (non-fatal): {e}")
+
     langfuse_context.update_current_observation(
         output={
-            "is_context_shift":           True,
-            "confidence":                 confidence,
-            "new_issues_count":           len(normalised_issues),
+            "is_context_shift":              True,
+            "confidence":                    confidence,
+            "new_issues_count":              len(normalised_issues),
+            "action":                        "auto_forked",
             "original_dispute_still_active": original_still_active,
         }
     )
 
     return {
         **state,
-        "context_shift_detected":      True,
-        "context_shift_confidence":    confidence,
-        "context_shift_reasoning":     reasoning,
-        "forked_issues":               normalised_issues,
+        "context_shift_detected":        True,
+        "context_shift_confidence":      confidence,
+        "context_shift_reasoning":       reasoning,
+        "forked_issues":                 normalised_issues,
         "original_dispute_still_active": original_still_active,
     }
