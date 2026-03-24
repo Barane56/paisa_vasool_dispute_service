@@ -13,7 +13,7 @@ from typing import List, Optional, Dict
 from poml import poml as render_poml
 
 PROMPT_NAME    = "structure_email"
-PROMPT_VERSION = "1.1"
+PROMPT_VERSION = "1.2"
 _TEMPLATE = str(Path(__file__).parent / "templates" / "structure_email.poml")
 
 
@@ -23,16 +23,26 @@ def build_structure_prompt(
     body_text: str,
     attachment_texts: List[str],
     groq_extracted: Optional[dict] = None,
-    attachment_metadata: Optional[List[Dict]] = None,  # NEW: [{file_name, file_type, extracted_text}]
+    attachment_metadata: Optional[List[Dict]] = None,
+    existing_dispute_context: Optional[Dict] = None,
 ) -> str:
     # Build enriched attachment block including file-type context
     att_block = _build_attachment_block(attachment_texts, attachment_metadata)
+
+    edc = existing_dispute_context or {}
     context = {
-        "subject":         subject,
-        "sender_email":    sender_email,
-        "body_text":       body_text[:2000],
-        "attachment_text": att_block,
-        "groq_extracted":  json.dumps(groq_extracted) if groq_extracted else "",
+        "subject":                  subject,
+        "sender_email":             sender_email,
+        "body_text":                body_text[:2000],
+        "attachment_text":          att_block,
+        "groq_extracted":           json.dumps(groq_extracted) if groq_extracted else "",
+        # Active dispute baseline — empty when not a follow-up
+        "has_existing_dispute":     bool(edc),
+        "existing_dispute_id":      str(edc.get("dispute_id", "")),
+        "existing_dispute_type":    edc.get("dispute_type", ""),
+        "existing_dispute_desc":    edc.get("description", ""),
+        "existing_dispute_status":  edc.get("status", ""),
+        "existing_dispute_invoice": edc.get("invoice_number", "") or "Not recorded",
     }
     messages = render_poml(_TEMPLATE, context)
     return "\n\n".join(m["content"] for m in messages if m.get("content"))

@@ -97,6 +97,16 @@ class EmailProcessingState(TypedDict):
     _ownership_unverified:    bool
     token_matched_dispute_id: Optional[int]   # Layer 1: DISP-XXXXX token match
 
+    # ── Pre-classify dispute baseline (set by pre_fetch_dispute_context) ──────
+    # Populated when a prior dispute is known BEFORE classify_email runs —
+    # either via DISP token match or task-level thread-header matching.
+    # Gives the classifier a comparison baseline so it can correctly set
+    # requires_fork=True when the new email raises a different issue.
+    # Shape: {dispute_id, dispute_type, description, status, invoice_number}
+    # Contract: always a Dict (never None). Empty dict {} = no prior dispute
+    # found or fetch failed. All reads should use .get() for safety.
+    existing_dispute_context: Dict  # {} means "not populated"
+
     # ── Related dispute (L2 soft match — same invoice, different issue) ───────
     # Set when L2 Gate A passes but Gate B similarity is below threshold.
     # The email gets a NEW case; this dispute is linked as RELATED for context.
@@ -196,6 +206,7 @@ def build_initial_state(
         "_needs_invoice_details":      False,
         "_ownership_unverified":       False,
         "token_matched_dispute_id":    None,
+        "existing_dispute_context":    {},
         "related_dispute_id":          None,
         "related_dispute_token":       None,
         "context_shift_detected":      False,

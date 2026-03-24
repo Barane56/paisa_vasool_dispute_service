@@ -119,8 +119,8 @@ async def node_detect_context_shift(
     skip_reason: str | None = None
     if not existing_id:
         skip_reason = "no existing dispute"
-    elif token_matched:
-        skip_reason = "token-matched (definitive continuation)"
+    elif token_matched and not requires_fork:
+        skip_reason = "token-matched and classifier confirmed continuation"
     elif intent in _NON_FORK_INTENTS:
         skip_reason = f"intent={intent} never requires a fork"
     elif not requires_fork:

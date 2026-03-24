@@ -23,6 +23,18 @@
   <p>Extracted Invoice Data: {{ groq_extracted }}</p>
   {% endif %}
 
+  {% if has_existing_dispute %}
+  <p>## Active Dispute (this email arrived on an existing thread)</p>
+  <p>Dispute ID   : {{ existing_dispute_id }}</p>
+  <p>Type         : {{ existing_dispute_type }}</p>
+  <p>Description  : {{ existing_dispute_desc }}</p>
+  <p>Status       : {{ existing_dispute_status }}</p>
+  <p>Invoice      : {{ existing_dispute_invoice }}</p>
+  <p>IMPORTANT: Use this to decide requires_fork. If the new email raises an
+  issue that is DIFFERENT from the active dispute above — even on the same
+  invoice — set requires_fork=true so a new dispute is forked automatically.</p>
+  {% endif %}
+
   <hint>
     ═══════════════════════════════════════════════════════════════
     ENTERPRISE AR SPLITTING STANDARD
@@ -159,8 +171,13 @@
                            PAYMENT_ADVICE, DOCUMENT_REQUEST, RESOLUTION_ACK, ABUSIVE,
                            DUPLICATE_CONTACT, ADVANCE_PAYMENT)
 
-    requires_fork        — true only when intent is MULTI_INTENT and issues are
-                           genuinely separate (different invoices, different FA actions)
+    requires_fork        — true in TWO cases:
+                           1. intent is MULTI_INTENT and issues are genuinely separate
+                              (different invoices, different FA actions)
+                           2. intent is DISPUTE and an Active Dispute block is shown above
+                              AND the new email raises a different problem from that
+                              existing dispute (different type, different line items, etc.)
+                              — even if both reference the same invoice number
 
     escalate_immediately — true only for LEGAL_THREAT, ESCALATION, ABUSIVE
 

@@ -178,15 +178,32 @@ async def node_fetch_context(
                         best_candidate   = None
                         best_similarity  = 0.0
 
+                        # Pre-fetch memory summaries for all Gate A candidates in one pass.
+                        # memory_summary is the rolling condensed history — essential for
+                        # mature disputes where the original description is stale.
+                        _sum_repo = MemorySummaryRepository(db_session)
+                        _candidate_summaries: dict = {}
+                        for _cd in gate_a_candidates:
+                            try:
+                                _sobj = await _sum_repo.get_for_dispute(_cd.dispute_id)
+                                _candidate_summaries[_cd.dispute_id] = (
+                                    _sobj.summary_text if _sobj else ""
+                                )
+                            except Exception:
+                                _candidate_summaries[_cd.dispute_id] = ""
+
+                        # body_text is already stripped of quoted reply content
+                        # by node_extract_text — using it here ensures we compare
+                        # only what the customer actually wrote in this reply.
                         body_to_compare = state.get("body_text", "").strip()
                         if body_to_compare and llm_client:
                             try:
                                 incoming_emb = await llm_client.embed(body_to_compare)
                                 if incoming_emb:
                                     for d in gate_a_candidates:
-                                        # Build comparison text from dispute description + memory summary
                                         dispute_text = " ".join(filter(None, [
                                             d.description or "",
+                                            _candidate_summaries.get(d.dispute_id, ""),
                                         ]))
                                         if not dispute_text.strip():
                                             continue

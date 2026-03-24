@@ -1188,14 +1188,23 @@ async def node_persist_results(
                 f"{len(forked_ids)} forked dispute(s): {forked_ids}"
             )
 
-            # Send a fresh-thread notification email for each forked dispute
+            # Send a fresh-thread notification email for each forked dispute.
+            # Zip forked_ids with forked_issues so each email uses the correct
+            # dispute type for that fork (not the primary dispute's type).
             from src.core.services.outbound_email_service import OutboundEmailService
-            _fork_svc = OutboundEmailService(db_session)
-            for _fork_id in forked_ids:
+            _fork_svc    = OutboundEmailService(db_session)
+            _fork_issues = state.get("forked_issues") or []
+            for _fork_idx, _fork_id in enumerate(forked_ids):
+                # Pick the matching issue dict; fall back to primary type if out of bounds
+                _fork_issue   = _fork_issues[_fork_idx] if _fork_idx < len(_fork_issues) else {}
                 try:
                     _fork_dispute = await _fork_svc.disp_repo.get_by_id(_fork_id)
                     _fork_token   = getattr(_fork_dispute, "dispute_token", f"PV-{_fork_id:05d}")
-                    _fork_type    = state.get("dispute_type_name") or "Payment Dispute"
+                    _fork_type    = (
+                        _fork_issue.get("type_hint")
+                        or state.get("dispute_type_name")
+                        or "Payment Dispute"
+                    )
                     _fork_body    = (
                         f"Dear Customer,\n\n"
                         f"Thank you for getting in touch. We have logged a new case "
