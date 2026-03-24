@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Optional, List, Dict
 
+from src.handlers.http_clients import llm_client
 from src.observability import observe, langfuse_context
 from src.control.agents.state import EmailProcessingState
 
@@ -78,13 +79,35 @@ async def node_fetch_context(
                     **payment.payment_details,
                 })
 
-    # ── Dispute lookup (4-level fallback) ─────────────────────────────────────
+    # ── Dispute lookup ────────────────────────────────────────────────────────
+    # Priority 0: if the task already resolved a dispute (email directly linked
+    # to a dispute via EmailInbox.dispute_id), trust it unconditionally.
+    # This is more authoritative than L1-L4 — the email thread is already
+    # anchored to a specific dispute, regardless of its status.
     customer_id       = state.get("customer_id")
     dispute_type_name = state.get("dispute_type_name", "")
     matched_invoice_id = state.get("matched_invoice_id")
     matched_dispute   = None
+    # L2 Gate B miss: different issue on same invoice — new case + RELATED link
+    _l2_related_dispute_id:    int | None = None
+    _l2_related_dispute_token: str | None = None
 
-    if customer_id:
+    task_dispute_id = state.get("existing_dispute_id")
+    if task_dispute_id:
+        dispute_repo   = DisputeRepository(db_session)
+        matched_dispute = await dispute_repo.get_by_id(task_dispute_id)
+        if matched_dispute:
+            logger.info(
+                f"[email_id={state['email_id']}] L0 match: task-level existing_dispute_id="
+                f"{task_dispute_id} — bypassing L1-L4 matching"
+            )
+        else:
+            logger.warning(
+                f"[email_id={state['email_id']}] task existing_dispute_id={task_dispute_id} "
+                f"not found in DB — falling through to L1-L4"
+            )
+
+    if not matched_dispute and customer_id:
         dispute_repo  = DisputeRepository(db_session)
         open_disputes = await dispute_repo.get_by_customer(customer_id)
 
@@ -110,32 +133,121 @@ async def node_fetch_context(
                         )
                         break
 
-            # Level 2: customer + invoice (type mismatch / re-open)
-            # If multiple disputes share the same invoice, prefer the one whose
-            # type name is closest to what the LLM returned — handles LLM paraphrase
-            # cases where L1 missed due to minor wording differences.
+            # Level 2 — smart cold-mail matching
+            # -------------------------------------------------------------------
+            # Gate A (hard filters — ALL must pass):
+            #   1. Same customer + same invoice (baseline)
+            #   2. Existing dispute is OPEN or UNDER_REVIEW
+            #   3. Dispute was created within 60 days (recency)
+            #   4. At least one prior episode exists (real conversation happened)
+            #
+            # Gate B (semantic similarity):
+            #   Embed the incoming body_text (quoted-reply-stripped) and compare
+            #   to the existing dispute's description + memory_summary.
+            #   ≥ 0.72  → same issue, route as follow-up (existing_dispute_id)
+            #   < 0.72  → different issue, new case (related_dispute_id only)
+            # -------------------------------------------------------------------
             if not matched_dispute and matched_invoice_id:
+                from datetime import datetime, timezone, timedelta
+
                 invoice_disputes = [d for d in open_disputes if d.invoice_id == matched_invoice_id]
+
                 if invoice_disputes:
-                    if len(invoice_disputes) == 1:
-                        matched_dispute = invoice_disputes[0]
-                    else:
-                        # Score each by normalised type name similarity
-                        _norm = lambda s: " ".join((s or "").lower().split())
-                        _norm_type = _norm(dispute_type_name)
-                        def _score(d):
-                            name = _norm(d.dispute_type.reason_name if d.dispute_type else "")
-                            if name == _norm_type:
-                                return 2   # exact match
-                            if _norm_type and (name in _norm_type or _norm_type in name):
-                                return 1   # partial match
-                            return 0
-                        matched_dispute = max(invoice_disputes, key=_score)
-                    logger.info(
-                        f"[email_id={state['email_id']}] L2 match: "
-                        f"customer+invoice → dispute_id={matched_dispute.dispute_id} "
-                        f"(from {len(invoice_disputes)} candidate(s))"
-                    )
+                    # Gate A: filter to OPEN/UNDER_REVIEW + recent + has episodes
+                    _now = datetime.now(timezone.utc)
+                    _cutoff = _now - timedelta(days=60)
+
+                    gate_a_candidates = []
+                    for d in invoice_disputes:
+                        if d.status not in ("OPEN", "UNDER_REVIEW"):
+                            continue
+                        created = d.created_at
+                        if created.tzinfo is None:
+                            from datetime import timezone as _tz
+                            created = created.replace(tzinfo=_tz.utc)
+                        if created < _cutoff:
+                            continue
+                        ep_count = await MemoryEpisodeRepository(db_session).count_for_dispute(d.dispute_id)
+                        if ep_count == 0:
+                            continue
+                        gate_a_candidates.append(d)
+
+                    if gate_a_candidates:
+                        # Gate B: semantic similarity of incoming body vs dispute description
+                        gate_b_threshold = 0.72
+                        best_candidate   = None
+                        best_similarity  = 0.0
+
+                        # Pre-fetch memory summaries for all Gate A candidates in one pass.
+                        # memory_summary is the rolling condensed history — essential for
+                        # mature disputes where the original description is stale.
+                        _sum_repo = MemorySummaryRepository(db_session)
+                        _candidate_summaries: dict = {}
+                        for _cd in gate_a_candidates:
+                            try:
+                                _sobj = await _sum_repo.get_for_dispute(_cd.dispute_id)
+                                _candidate_summaries[_cd.dispute_id] = (
+                                    _sobj.summary_text if _sobj else ""
+                                )
+                            except Exception:
+                                _candidate_summaries[_cd.dispute_id] = ""
+
+                        # body_text is already stripped of quoted reply content
+                        # by node_extract_text — using it here ensures we compare
+                        # only what the customer actually wrote in this reply.
+                        body_to_compare = state.get("body_text", "").strip()
+                        if body_to_compare and llm_client:
+                            try:
+                                incoming_emb = await llm_client.embed(body_to_compare)
+                                if incoming_emb:
+                                    for d in gate_a_candidates:
+                                        dispute_text = " ".join(filter(None, [
+                                            d.description or "",
+                                            _candidate_summaries.get(d.dispute_id, ""),
+                                        ]))
+                                        if not dispute_text.strip():
+                                            continue
+                                        dispute_emb = await llm_client.embed(dispute_text)
+                                        if not dispute_emb:
+                                            continue
+                                        # Cosine similarity
+                                        import math
+                                        dot   = sum(a * b for a, b in zip(incoming_emb, dispute_emb))
+                                        mag_a = math.sqrt(sum(a * a for a in incoming_emb))
+                                        mag_b = math.sqrt(sum(b * b for b in dispute_emb))
+                                        sim   = dot / (mag_a * mag_b) if mag_a and mag_b else 0.0
+                                        if sim > best_similarity:
+                                            best_similarity = sim
+                                            best_candidate  = d
+                            except Exception as emb_err:
+                                logger.warning(
+                                    f"[email_id={state['email_id']}] L2 Gate B embedding "
+                                    f"failed (non-fatal): {emb_err}"
+                                )
+
+                        if best_candidate and best_similarity >= gate_b_threshold:
+                            matched_dispute = best_candidate
+                            logger.info(
+                                f"[email_id={state['email_id']}] L2 match "
+                                f"(Gate A+B, similarity={best_similarity:.2f}≥{gate_b_threshold}): "
+                                f"customer+invoice → dispute_id={matched_dispute.dispute_id} "
+                                f"(follow-up confirmed)"
+                            )
+                        else:
+                            # Gate B failed — different issue on same invoice.
+                            # Pick the most recent Gate A candidate as the related dispute.
+                            _related = sorted(gate_a_candidates, key=lambda d: d.created_at, reverse=True)[0]
+                            _related_token = getattr(_related, "dispute_token", None) or f"PV-{_related.dispute_id:05d}"
+                            logger.info(
+                                f"[email_id={state['email_id']}] L2 no match "
+                                f"(Gate B similarity={best_similarity:.2f}<{gate_b_threshold}): "
+                                f"new issue on same invoice — related_dispute_id="
+                                f"{_related.dispute_id}, creating new case"
+                            )
+                            # Store as related (context only, not routing)
+                            # Will be written to state and used by generate_response + persist_results
+                            _l2_related_dispute_id    = _related.dispute_id
+                            _l2_related_dispute_token = _related_token
 
             # Level 3: follow-up to cold mail (dispute exists but had no invoice yet)
             if not matched_dispute and matched_invoice_id:
@@ -205,12 +317,90 @@ async def node_fetch_context(
         }
     )
 
+    # ── AR Document chain — graph query via shared reference keys ───────────
+    #
+    # Priority:
+    #   1. matched_invoice_number → inv_number key (most reliable anchor)
+    #   2. candidate_references   → po_number / grn_number / payment_ref / etc.
+    #      Tried in order; first non-empty result wins.  Only attempted when
+    #      the invoice walk found nothing.
+    #
+    # The outer try guards against import/setup errors.
+    # Each inner try is independent so one bad reference never blocks another.
+    ar_document_chain: list = []
+
+    if state.get("customer_id"):
+        try:
+            from src.core.services.ar_document_service import (
+                ARDocumentService, resolve_customer_scope,
+            )
+            ar_svc = ARDocumentService(db_session)
+            scope  = resolve_customer_scope(state["customer_id"])
+
+            # Path 1 — invoice number
+            if state.get("matched_invoice_number"):
+                try:
+                    chain = await ar_svc.get_document_chain_for_invoice(
+                        invoice_number = state["matched_invoice_number"],
+                        customer_scope = scope,
+                    )
+                    if chain:
+                        ar_document_chain = chain
+                        logger.info(
+                            f"[email_id={state['email_id']}] AR graph (inv_number): "
+                            f"{len(chain)} doc(s) for "
+                            f"invoice={state['matched_invoice_number']}: "
+                            f"{[d['doc_type'] for d in chain]}"
+                        )
+                except Exception as inv_walk_err:
+                    logger.warning(
+                        f"[email_id={state['email_id']}] AR graph inv-walk failed "
+                        f"(non-fatal): {inv_walk_err}"
+                    )
+
+            # Path 2 — fallback: any other reference extracted from the email
+            if not ar_document_chain:
+                for ref in (state.get("candidate_references") or []):
+                    ref_value = (ref.get("value") or "").strip()
+                    key_type  = (ref.get("key_type") or "").strip()
+                    if not ref_value or not key_type:
+                        continue
+                    try:
+                        chain = await ar_svc.get_document_chain_for_reference(
+                            ref_value      = ref_value,
+                            key_type       = key_type,
+                            customer_scope = scope,
+                        )
+                        if chain:
+                            ar_document_chain = chain
+                            logger.info(
+                                f"[email_id={state['email_id']}] AR graph "
+                                f"({key_type}={ref_value}): {len(chain)} doc(s): "
+                                f"{[d['doc_type'] for d in chain]}"
+                            )
+                            break  # first hit wins
+                    except Exception as ref_walk_err:
+                        logger.warning(
+                            f"[email_id={state['email_id']}] AR graph ref-walk failed "
+                            f"for {key_type}={ref_value!r} (non-fatal): {ref_walk_err}"
+                        )
+                        # continue to next reference
+
+        except Exception as ar_outer_err:
+            logger.warning(
+                f"[email_id={state['email_id']}] AR graph setup failed "
+                f"(non-fatal): {ar_outer_err}"
+            )
+
     return {
         **state,
-        "invoice_details":     invoice_details,
-        "all_payment_details": all_payment_details,
-        "existing_dispute_id": existing_dispute_id,
-        "memory_summary":      memory_summary,
-        "recent_episodes":     recent_episodes,
-        "pending_questions":   pending_questions,
+        "invoice_details":       invoice_details,
+        "all_payment_details":   all_payment_details,
+        "existing_dispute_id":   existing_dispute_id,
+        "memory_summary":        memory_summary,
+        "recent_episodes":       recent_episodes,
+        "pending_questions":     pending_questions,
+        "ar_document_chain":     ar_document_chain,
+        "related_dispute_id":    _l2_related_dispute_id,
+        "related_dispute_token": _l2_related_dispute_token,
     }

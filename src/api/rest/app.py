@@ -87,6 +87,7 @@ def create_app() -> FastAPI:
     from src.api.rest.routes.payments import router as payment_router
     from src.api.rest.routes.dispute_types import router as dtype_router
     from src.api.rest.routes.supporting_docs import router as supporting_docs_router
+    from src.api.rest.routes.ar_documents import router as ar_docs_router
 
     from src.api.rest.routes.mailboxes import (
         router as mailbox_router,
@@ -100,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(email_router,           prefix="/api/v1")
     app.include_router(dispute_router,         prefix="/api/v1")
     app.include_router(supporting_docs_router, prefix="/api/v1")
+    app.include_router(ar_docs_router,         prefix="/api/v1")
     app.include_router(invoice_router,         prefix="/api/v1")
     app.include_router(payment_router,         prefix="/api/v1")
     app.include_router(dtype_router,           prefix="/api/v1")

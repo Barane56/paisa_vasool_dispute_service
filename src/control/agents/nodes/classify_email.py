@@ -33,6 +33,25 @@ logger = logging.getLogger(__name__)
 
 _VALID_PRIORITIES      = frozenset({"LOW", "MEDIUM", "HIGH"})
 _VALID_CLASSIFICATIONS = frozenset({"DISPUTE", "CLARIFICATION"})
+_VALID_INTENTS         = frozenset({
+    "FACTUAL_QUERY", "DISPUTE", "DEDUCTION_CLAIM", "CREDIT_REQUEST",
+    "PAYMENT_ADVICE", "PAYMENT_DELAY_REQUEST", "DOCUMENT_REQUEST",
+    "INVOICE_CORRECTION_REQUEST", "ESCALATION", "LEGAL_THREAT",
+    "SOCIAL", "RESOLUTION_ACK", "ABUSIVE", "IRRELEVANT",
+    "DUPLICATE_CONTACT", "MULTI_INTENT",
+    "GST_QUERY", "TDS_DEDUCTION", "ADVANCE_PAYMENT",
+})
+_VALID_SUGGESTED_ACTIONS = frozenset({
+    "CREATE_CASE", "UPDATE_CASE", "CLOSE_CASE", "ACKNOWLEDGE_ONLY",
+})
+
+# Intents that must NEVER create a new case regardless of anything else
+_NO_NEW_CASE_INTENTS = frozenset({
+    "SOCIAL", "IRRELEVANT", "PAYMENT_ADVICE", "RESOLUTION_ACK",
+    "DUPLICATE_CONTACT", "ADVANCE_PAYMENT", "FACTUAL_QUERY",
+})
+# Intents that trigger immediate FA escalation
+_ESCALATE_INTENTS = frozenset({"LEGAL_THREAT", "ESCALATION", "ABUSIVE"})
 
 
 def _safe_priority(v: Any) -> str:
@@ -41,6 +60,65 @@ def _safe_priority(v: Any) -> str:
 
 def _safe_classification(v: Any) -> str:
     return v.upper() if isinstance(v, str) and v.upper() in _VALID_CLASSIFICATIONS else "CLARIFICATION"
+
+
+def _safe_intent(v: Any) -> str:
+    if isinstance(v, str) and v.upper() in _VALID_INTENTS:
+        return v.upper()
+    return "FACTUAL_QUERY"  # safe default — won't create unnecessary cases
+
+
+def _safe_suggested_action(v: Any) -> str:
+    if isinstance(v, str) and v.upper() in _VALID_SUGGESTED_ACTIONS:
+        return v.upper()
+    return "CREATE_CASE"
+
+
+_VALID_DOC_REF_TYPES = frozenset({
+    "po_number", "grn_number", "payment_ref",
+    "contract_number", "credit_note_number",
+})
+
+
+def _safe_doc_ref_type(v: Any) -> Optional[str]:
+    """Return a validated document_reference_type or None."""
+    if isinstance(v, str) and v.lower() in _VALID_DOC_REF_TYPES:
+        return v.lower()
+    return None
+
+
+def _derive_flags_from_intent(intent: str, llm_flags: dict) -> dict:
+    """
+    Merge LLM-provided flags with hard-coded rules per intent.
+    Hard rules always win over LLM output to prevent hallucination-driven case creation.
+    """
+    # Hard override: these intents must never create a case
+    if intent in _NO_NEW_CASE_INTENTS:
+        requires_new_case = False
+        suggested_action  = "ACKNOWLEDGE_ONLY" if intent != "RESOLUTION_ACK" else "CLOSE_CASE"
+    else:
+        requires_new_case = bool(llm_flags.get("requires_new_case", True))
+        suggested_action  = _safe_suggested_action(llm_flags.get("suggested_action"))
+
+    # Hard override: escalation intents always escalate
+    escalate_immediately = intent in _ESCALATE_INTENTS or bool(llm_flags.get("escalate_immediately", False))
+
+    # Hard override: priority for legal/escalation
+    if intent in ("LEGAL_THREAT", "ESCALATION"):
+        priority_override = "HIGH"
+    else:
+        raw_po = (llm_flags.get("priority_override") or "").upper()
+        priority_override = raw_po if raw_po in _VALID_PRIORITIES else None
+
+    requires_fork = bool(llm_flags.get("requires_fork", False)) and intent in ("MULTI_INTENT", "DISPUTE")
+
+    return {
+        "requires_new_case":    requires_new_case,
+        "requires_fork":        requires_fork,
+        "escalate_immediately": escalate_immediately,
+        "priority_override":    priority_override,
+        "suggested_action":     suggested_action,
+    }
 
 
 async def _assign_type(
@@ -132,6 +210,12 @@ async def node_classify_email(
             "_answers_pending_questions": [],
             "_new_dispute_type":          None,
             "inline_issues":              [],
+            "intent":                     "DISPUTE" if classification == "DISPUTE" else "FACTUAL_QUERY",
+            "requires_new_case":          classification == "DISPUTE",
+            "requires_fork":              False,
+            "escalate_immediately":       False,
+            "priority_override":          None,
+            "suggested_action":           "CREATE_CASE" if classification == "DISPUTE" else "ACKNOWLEDGE_ONLY",
         }
 
     # ── Step 1: Structure — how many issues, what are they ───────────────────
@@ -142,6 +226,7 @@ async def node_classify_email(
         attachment_texts=state["attachment_texts"],
         groq_extracted=state.get("groq_extracted"),
         attachment_metadata=state.get("attachment_metadata"),
+        existing_dispute_context=state.get("existing_dispute_context"),
     )
 
     langfuse_context.update_current_observation(
@@ -169,6 +254,12 @@ async def node_classify_email(
             "_answers_pending_questions": [],
             "_new_dispute_type":          None,
             "inline_issues":              [],
+            "intent":                     "FACTUAL_QUERY",
+            "requires_new_case":          False,
+            "requires_fork":              False,
+            "escalate_immediately":       False,
+            "priority_override":          None,
+            "suggested_action":           "ACKNOWLEDGE_ONLY",
         }
 
     # Parse structure output
@@ -177,6 +268,17 @@ async def node_classify_email(
     primary_priority        = _safe_priority(structure_data.get("priority"))
     primary_invoice_number  = (structure_data.get("invoice_number") or "").strip() or None
     primary_disputed_amount = (structure_data.get("disputed_amount") or "").strip() or None
+    # Non-invoice AR document reference for primary issue (PO, GRN, etc.)
+    primary_doc_reference      = (structure_data.get("document_reference") or "").strip() or None
+    primary_doc_reference_type = _safe_doc_ref_type(structure_data.get("document_reference_type"))
+    # If the LLM set document_reference but not document_reference_type, discard both
+    # to avoid sending an untyped reference downstream.
+    if primary_doc_reference and not primary_doc_reference_type:
+        logger.warning(
+            f"[email_id={state['email_id']}] primary issue has document_reference "
+            f"'{primary_doc_reference}' but missing/invalid document_reference_type — discarding"
+        )
+        primary_doc_reference = None
 
     raw_additional = structure_data.get("additional_issues") or []
     # Validate additional issues — each needs at minimum a description
@@ -188,12 +290,24 @@ async def node_classify_email(
         if not desc:
             logger.warning(f"[email_id={state['email_id']}] additional_issue[{idx}] has no description, skipped")
             continue
+        doc_ref      = (raw.get("document_reference") or "").strip() or None
+        doc_ref_type = _safe_doc_ref_type(raw.get("document_reference_type"))
+        # Discard document_reference when no valid type accompanies it
+        if doc_ref and not doc_ref_type:
+            logger.warning(
+                f"[email_id={state['email_id']}] additional_issue[{idx}] has "
+                f"document_reference '{doc_ref}' but missing/invalid "
+                f"document_reference_type — discarding"
+            )
+            doc_ref = None
         structured_additional.append({
-            "classification":  _safe_classification(raw.get("classification")),
-            "description":     desc,
-            "invoice_number":  (raw.get("invoice_number") or "").strip() or None,
-            "disputed_amount": (raw.get("disputed_amount") or "").strip() or None,
-            "priority":        _safe_priority(raw.get("priority")),
+            "classification":          _safe_classification(raw.get("classification")),
+            "description":             desc,
+            "invoice_number":          (raw.get("invoice_number") or "").strip() or None,
+            "document_reference":      doc_ref,
+            "document_reference_type": doc_ref_type,
+            "disputed_amount":         (raw.get("disputed_amount") or "").strip() or None,
+            "priority":                _safe_priority(raw.get("priority")),
         })
 
     total_issues = 1 + len(structured_additional)
@@ -228,12 +342,12 @@ async def node_classify_email(
             label=f"additional[{idx}]",
         )
         inline_issues.append({
-            **issue,
-            "dispute_type_name":    type_data["dispute_type_name"],
-            "is_new_type":          type_data["is_new_type"],
-            "new_type_description": type_data["new_type_description"],
-            "new_type_severity":    type_data["new_type_severity"],
-        })
+                **issue,
+                "dispute_type_name":    type_data["dispute_type_name"],
+                "is_new_type":          type_data["is_new_type"],
+                "new_type_description": type_data["new_type_description"],
+                "new_type_severity":    type_data["new_type_severity"],
+            })
 
     # Build _new_dispute_type for the primary if needed
     new_dispute_type = None
@@ -264,16 +378,35 @@ async def node_classify_email(
         }
     )
 
+    # Derive intent flags — hard rules override LLM suggestions
+    primary_intent = _safe_intent(structure_data.get("intent"))
+    intent_flags   = _derive_flags_from_intent(primary_intent, structure_data)
+
+    logger.info(
+        f"[email_id={state['email_id']}] Intent={primary_intent} "
+        f"requires_new_case={intent_flags['requires_new_case']} "
+        f"escalate={intent_flags['escalate_immediately']} "
+        f"action={intent_flags['suggested_action']}"
+    )
+
     return {
         **state,
         "available_dispute_types":    available_dispute_types,
         "classification":             primary_classification,
         "dispute_type_name":          primary_type_data["dispute_type_name"],
-        "priority":                   primary_priority,
+        "priority":                   intent_flags["priority_override"] or primary_priority,
         "description":                primary_description,
         "invoice_number":             primary_invoice_number,
+        "document_reference":         primary_doc_reference,
+        "document_reference_type":    primary_doc_reference_type,
         "disputed_amount":            primary_disputed_amount,
         "_answers_pending_questions": [],
         "_new_dispute_type":          new_dispute_type,
         "inline_issues":              inline_issues,
+        "intent":                     primary_intent,
+        "requires_new_case":          intent_flags["requires_new_case"],
+        "requires_fork":              intent_flags["requires_fork"],
+        "escalate_immediately":       intent_flags["escalate_immediately"],
+        "priority_override":          intent_flags["priority_override"],
+        "suggested_action":           intent_flags["suggested_action"],
     }

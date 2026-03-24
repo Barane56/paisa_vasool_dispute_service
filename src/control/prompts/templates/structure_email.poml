@@ -23,6 +23,18 @@
   <p>Extracted Invoice Data: {{ groq_extracted }}</p>
   {% endif %}
 
+  {% if has_existing_dispute %}
+  <p>## Active Dispute (this email arrived on an existing thread)</p>
+  <p>Dispute ID   : {{ existing_dispute_id }}</p>
+  <p>Type         : {{ existing_dispute_type }}</p>
+  <p>Description  : {{ existing_dispute_desc }}</p>
+  <p>Status       : {{ existing_dispute_status }}</p>
+  <p>Invoice      : {{ existing_dispute_invoice }}</p>
+  <p>IMPORTANT: Use this to decide requires_fork. If the new email raises an
+  issue that is DIFFERENT from the active dispute above — even on the same
+  invoice — set requires_fork=true so a new dispute is forked automatically.</p>
+  {% endif %}
+
   <hint>
     ═══════════════════════════════════════════════════════════════
     ENTERPRISE AR SPLITTING STANDARD
@@ -84,8 +96,12 @@
     ───────────────────────────────────────────────────────────────
     ALL THREE conditions must be true to split. If any one is false → ONE ticket.
 
-      A. The email references TWO OR MORE DIFFERENT invoice numbers AND
-         each invoice has a distinct, unrelated problem.
+      A. The email references TWO OR MORE DIFFERENT AR document identifiers
+         (invoice numbers, PO numbers, GRN numbers, payment references, or
+         contract numbers) AND each has a distinct, unrelated problem.
+         Note: an invoice number and the PO number that funded it are the SAME
+         document chain — they do NOT count as two different identifiers for
+         splitting purposes.
 
       B. Each issue requires a DIFFERENT financial action:
          e.g. issue 1 = credit note on INV-X, issue 2 = address correction
@@ -118,11 +134,60 @@
     ───────────────────────────────────────────────────────────────
     CLASSIFICATION
     ───────────────────────────────────────────────────────────────
-    DISPUTE      — customer actively rejects a charge or claims a billing
-                   error. Money is withheld because of an error in the invoice.
+    DISPUTE       — customer actively rejects a charge or claims a billing error.
     CLARIFICATION — customer asks questions, requests documents, gives notice
-                   of a delay, or lists conditions before payment.
-                   No billing error alleged.
+                    of a delay, or lists conditions before payment.
+
+    ───────────────────────────────────────────────────────────────
+    INTENT — pick exactly ONE from this list:
+    ───────────────────────────────────────────────────────────────
+    FACTUAL_QUERY            — wants read-only info: due dates, balances, line items
+    DISPUTE                  — actively rejects a charge or claims billing error
+    DEDUCTION_CLAIM          — paid less than invoiced, believes their deduction is valid
+    CREDIT_REQUEST           — asks for credit note, refund, or adjustment
+    PAYMENT_ADVICE           — notifying that payment was sent / remittance attached
+    PAYMENT_DELAY_REQUEST    — asking for extension, payment plan, or deferral
+    DOCUMENT_REQUEST         — needs a copy: invoice, statement, credit note, proof
+    INVOICE_CORRECTION_REQUEST — wants invoice data corrected (address, PO, GST code)
+    ESCALATION               — explicitly escalating; CCing management; complaining about wait
+    LEGAL_THREAT             — mentions lawyers, legal action, court, chargeback
+    SOCIAL                   — greetings, pleasantries, thank-yous, no billing content
+    RESOLUTION_ACK           — confirms issue resolved, expresses satisfaction
+    ABUSIVE                  — profanity or personal attacks directed at individuals
+    IRRELEVANT               — misdirected mail, spam, nothing to do with AR
+    DUPLICATE_CONTACT        — following up on existing case, "any update on PV-XXXXX?"
+    MULTI_INTENT             — genuinely contains 2+ distinct billing intents
+    GST_QUERY                — asking about GST treatment, HSN codes, e-invoicing (India)
+    TDS_DEDUCTION            — notifying TDS deducted at source (India statutory)
+    ADVANCE_PAYMENT          — wants to make a prepayment or apply an advance
+
+    ───────────────────────────────────────────────────────────────
+    PIPELINE FLAGS — derive these from the intent:
+    ───────────────────────────────────────────────────────────────
+    requires_new_case    — true only for: DISPUTE, DEDUCTION_CLAIM, CREDIT_REQUEST,
+                           INVOICE_CORRECTION_REQUEST, PAYMENT_DELAY_REQUEST, MULTI_INTENT,
+                           ESCALATION, LEGAL_THREAT, GST_QUERY, TDS_DEDUCTION
+                           false for everything else (SOCIAL, IRRELEVANT, FACTUAL_QUERY,
+                           PAYMENT_ADVICE, DOCUMENT_REQUEST, RESOLUTION_ACK, ABUSIVE,
+                           DUPLICATE_CONTACT, ADVANCE_PAYMENT)
+
+    requires_fork        — true in TWO cases:
+                           1. intent is MULTI_INTENT and issues are genuinely separate
+                              (different invoices, different FA actions)
+                           2. intent is DISPUTE and an Active Dispute block is shown above
+                              AND the new email raises a different problem from that
+                              existing dispute (different type, different line items, etc.)
+                              — even if both reference the same invoice number
+
+    escalate_immediately — true only for LEGAL_THREAT, ESCALATION, ABUSIVE
+
+    priority_override    — "HIGH" for LEGAL_THREAT and ESCALATION, null for everything else
+
+    suggested_action     — one of:
+                           CREATE_CASE        (requires_new_case = true, no existing case)
+                           UPDATE_CASE        (attaching to existing case)
+                           CLOSE_CASE         (RESOLUTION_ACK)
+                           ACKNOWLEDGE_ONLY   (SOCIAL, IRRELEVANT, PAYMENT_ADVICE, DUPLICATE_CONTACT)
 
     ───────────────────────────────────────────────────────────────
     FOR EACH ISSUE return:
@@ -138,6 +203,14 @@
                         Never repeat the same invoice number across issues unless
                         genuinely the same invoice has multiple unrelated problems.
                         null if no invoice number stated for this issue.
+      document_reference : when no invoice_number is present, set this to the
+                        primary AR document reference for this issue — e.g. a PO
+                        number, GRN number, payment reference, or contract number.
+                        Use the exact value as written in the email. null if absent.
+      document_reference_type : the type of document_reference above.
+                        Must be one of: "po_number", "grn_number", "payment_ref",
+                        "contract_number", "credit_note_number".
+                        null when document_reference is null.
       disputed_amount : amount withheld/disputed for this issue, or null
       priority        : "LOW", "MEDIUM", or "HIGH"
 
@@ -147,12 +220,20 @@
   <p>## Output Format</p>
   <p>Return ONLY valid JSON:
   {
-    "classification":    "DISPUTE" or "CLARIFICATION",
-    "description":       "short customer-facing clause",
-    "invoice_number":    "INV-XXXX or null",
-    "disputed_amount":   "INR X,XX,XXX or null",
-    "priority":          "LOW" or "MEDIUM" or "HIGH",
-    "additional_issues": []
+    "classification":     "DISPUTE" or "CLARIFICATION",
+    "intent":             "one intent from the list above",
+    "description":        "short customer-facing clause",
+    "invoice_number":     "INV-XXXX or null",
+    "document_reference": "PO-XXXX or GRN-XXXX or null",
+    "document_reference_type": "po_number|grn_number|payment_ref|contract_number|credit_note_number or null",
+    "disputed_amount":    "INR X,XX,XXX or null",
+    "priority":           "LOW" or "MEDIUM" or "HIGH",
+    "requires_new_case":  true or false,
+    "requires_fork":      true or false,
+    "escalate_immediately": true or false,
+    "priority_override":  "HIGH" or null,
+    "suggested_action":   "CREATE_CASE" or "UPDATE_CASE" or "CLOSE_CASE" or "ACKNOWLEDGE_ONLY",
+    "additional_issues":  []
   }
   When genuinely separate issues exist, additional_issues contains objects
   with the same fields (minus additional_issues itself).
