@@ -138,6 +138,7 @@ async def _call_llm_for_issue(
     focus_invoice_number: Optional[str] = None,
     attachment_metadata: Optional[List[Dict]] = None,
     ar_document_chain: Optional[List[Dict]] = None,
+    related_dispute_token: Optional[str] = None,
 ) -> Dict:
     """
     Run one full generate_response.poml LLM call for a single issue.
@@ -163,6 +164,7 @@ async def _call_llm_for_issue(
         focus_invoice_number=focus_invoice_number,
         attachment_metadata=attachment_metadata,
         ar_document_chain=ar_document_chain,
+        related_dispute_token=related_dispute_token,
     )
 
     try:
@@ -370,9 +372,8 @@ async def node_generate_ai_response(
             email_id=email_id,
             is_focused_issue=False,
             attachment_metadata=state.get("attachment_metadata"),
-            # ar_document_chain was populated by fetch_context for the primary
-            # issue using matched_invoice_number or candidate_references fallback
             ar_document_chain=state.get("ar_document_chain") or [],
+            related_dispute_token=state.get("related_dispute_token"),
         )
         langfuse_context.update_current_observation(
             input={"prompt_name": RESPONSE_PROMPT_NAME, "prompt_version": RESPONSE_PROMPT_VERSION},
@@ -542,6 +543,7 @@ async def node_generate_ai_response(
             focus_invoice_number=spec.get("invoice_number"),
             attachment_metadata=state.get("attachment_metadata"),
             ar_document_chain=ar_chain_for_issue,
+            related_dispute_token=state.get("related_dispute_token"),
         )
         per_issue_responses.append(result)
         all_fa_questions.extend(result.get("questions_to_ask") or [])

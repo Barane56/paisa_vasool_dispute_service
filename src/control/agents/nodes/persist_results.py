@@ -683,6 +683,33 @@ async def node_persist_results(
             dispute_id    = dispute.dispute_id
             dispute_token = dispute.dispute_token
 
+            # ── L2 related-dispute link ───────────────────────────────────────
+            # When L2 Gate B detected a different issue on the same invoice, a
+            # related_dispute_id was set in state. Write a RELATED relationship
+            # so both disputes are visible as linked on the FA dashboard.
+            _related_id = state.get("related_dispute_id")
+            if _related_id:
+                try:
+                    await _link_disputes(
+                        db_session,
+                        source_dispute_id=dispute_id,
+                        target_dispute_id=_related_id,
+                        relationship_type="RELATED",
+                        context_note=(
+                            f"Different issue detected on the same invoice. "
+                            f"L2 Gate B similarity below threshold — new case created."
+                        ),
+                    )
+                    logger.info(
+                        f"[email_id={email_id}] Linked new dispute_id={dispute_id} "
+                        f"as RELATED to existing dispute_id={_related_id}"
+                    )
+                except Exception as rel_err:
+                    logger.warning(
+                        f"[email_id={email_id}] RELATED link write failed "
+                        f"(non-fatal): {rel_err}"
+                    )
+
             # Flag unverified disputes with an activity log so FA knows why
             if state.get("_ownership_unverified"):
                 db_session.add(DisputeActivityLog(
@@ -822,16 +849,20 @@ async def node_persist_results(
         ar_chain = state.get("ar_document_chain") or []
         if ar_chain:
             try:
-                from src.core.services.ar_document_service import ARDocumentService
+                from src.core.services.ar_document_service import ARDocumentService, _upsert_anchor_row
                 ar_svc  = ARDocumentService(db_session)
                 doc_ids = [d["doc_id"] for d in ar_chain if d.get("doc_id")]
                 if doc_ids:
-                    await ar_svc.link_ar_documents_to_dispute(
-                        dispute_id=dispute_id,
-                        doc_ids=doc_ids,
-                        linked_by=None,   # agent-linked
-                        context_note=f"Linked via email pipeline graph walk (invoice={state.get('matched_invoice_number')})",
-                    )
+                    # Upsert the anchor row (handles re-processing the same
+                    # email on an existing dispute without unique constraint errors)
+                    await _upsert_anchor_row(db_session, dispute_id, doc_ids[0], None)
+                    if len(doc_ids) > 1:
+                        await ar_svc.link_ar_documents_to_dispute(
+                            dispute_id   = dispute_id,
+                            doc_ids      = doc_ids[1:],
+                            linked_by    = None,
+                            context_note = f"Graph chain (invoice={state.get('matched_invoice_number')})",
+                        )
                     logger.info(
                         f"[email_id={email_id}] Linked {len(doc_ids)} AR doc(s) "
                         f"to dispute_id={dispute_id}"
@@ -1142,12 +1173,69 @@ async def node_persist_results(
             except Exception as emb_err:
                 logger.warning(f"[email_id={email_id}] Embedding save failed: {emb_err}")
 
-        # ── 9b. Context-shift fork (removed — FA-driven recommendation system) ─
-        # detect_context_shift.py now writes DisputeForkRecommendation rows
-        # instead of setting context_shift_detected=True.  The FA accepts or
-        # dismisses recommendations via the dispute overview tab.  No automatic
-        # dispute creation happens here.
+        # ── 9b. Create FORKED disputes (context-shift follow-up) ──────────────
         forked_ids: List[int] = []
+        if state.get("context_shift_detected") and state.get("forked_issues"):
+            forked_ids = await _persist_forked_disputes(
+                db_session,
+                parent_dispute_id=dispute_id,
+                forked_issues=state["forked_issues"],
+                email_id=email_id,
+                customer_id=state.get("customer_id") or "unknown",
+            )
+            logger.info(
+                f"[email_id={email_id}] Context shift: auto-created "
+                f"{len(forked_ids)} forked dispute(s): {forked_ids}"
+            )
+
+            # Send a fresh-thread notification email for each forked dispute
+            from src.core.services.outbound_email_service import OutboundEmailService
+            _fork_svc = OutboundEmailService(db_session)
+            for _fork_id in forked_ids:
+                try:
+                    _fork_dispute = await _fork_svc.disp_repo.get_by_id(_fork_id)
+                    _fork_token   = getattr(_fork_dispute, "dispute_token", f"PV-{_fork_id:05d}")
+                    _fork_type    = state.get("dispute_type_name") or "Payment Dispute"
+                    _fork_body    = (
+                        f"Dear Customer,\n\n"
+                        f"Thank you for getting in touch. We have logged a new case "
+                        f"based on your recent message.\n\n"
+                        f"Your case reference: {_fork_token}\n\n"
+                        f"Please quote this reference in any future correspondence "
+                        f"regarding this matter. Our team will review and be in touch shortly.\n\n"
+                        f"Regards,\n"
+                        f"Accounts Receivable Team\n\n"
+                        f"Do Not Reply to this email. This is an Auto Generated Response."
+                    )
+                    await _fork_svc.compose_and_send(
+                        dispute_id=_fork_id,
+                        sent_by_user_id=None,
+                        to_email=state["sender_email"],
+                        subject=f"[{_fork_token}] {_fork_type}",
+                        body_html="<p>" + _fork_body.replace("\n", "<br/>") + "</p>",
+                        body_text=_fork_body,
+                        reply_to_message_id=None,
+                        force_new_thread=True,
+                        attachments=[],
+                        override_smtp_credentials=_build_agent_smtp_override(),
+                    )
+                except Exception as _fork_mail_err:
+                    logger.error(
+                        f"[email_id={email_id}] Fork notification failed for "
+                        f"dispute_id={_fork_id}: {_fork_mail_err}", exc_info=True
+                    )
+
+            if state.get("context_shift_reasoning"):
+                db_session.add(DisputeActivityLog(
+                    dispute_id=dispute_id,
+                    action_type="CONTEXT_SHIFT_DETECTED",
+                    notes=(
+                        f"AI detected context shift "
+                        f"(confidence={state.get('context_shift_confidence', 0):.0%}). "
+                        f"Reason: {state['context_shift_reasoning']}. "
+                        f"Forked: {forked_ids}."
+                    ),
+                ))
 
         # ── 9c. Attach existing DisputeDocuments from the same customer/domain ──
         # When a dispute is first created for a customer, any previously uploaded

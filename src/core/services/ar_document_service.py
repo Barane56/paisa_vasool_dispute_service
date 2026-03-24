@@ -57,6 +57,35 @@ def resolve_customer_scope(customer_email: str) -> str:
         return customer_email or "unknown"
     return customer_email.lower().strip()
 
+
+async def _upsert_anchor_row(
+    db:         AsyncSession,
+    dispute_id: int,
+    doc_id:     int,
+    linked_by:  int | None,
+) -> None:
+    """
+    Insert or UPDATE the ANCHOR row in dispute_ar_documents.
+    If (dispute_id, doc_id) already exists, sets context_note='ANCHOR'.
+    Uses a savepoint so a conflict never kills the outer transaction.
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from src.data.models.postgres.ar_document_models import DisputeARDocument
+    try:
+        async with db.begin_nested():
+            await db.execute(
+                pg_insert(DisputeARDocument)
+                .values(dispute_id=dispute_id, doc_id=doc_id,
+                        linked_by=linked_by, context_note="ANCHOR")
+                .on_conflict_do_update(
+                    constraint="uq_dispute_ar_doc",
+                    set_={"context_note": "ANCHOR"},
+                )
+            )
+    except Exception as e:
+        logger.warning(f"_upsert_anchor_row failed (non-fatal): {e}")
+
+
 class ARDocumentService:
     def __init__(self, db: AsyncSession):
         self.db   = db
@@ -428,13 +457,18 @@ class ARDocumentService:
             customer_scope = customer_scope,
         )
         doc_ids = [d["doc_id"] for d in chain if d.get("doc_id")]
+
         if doc_ids:
-            await self.link_ar_documents_to_dispute(
-                dispute_id   = dispute_id,
-                doc_ids      = doc_ids,
-                linked_by    = user_id,
-                context_note = f"Anchor manually updated to doc_id={new_doc_id} by FA user_id={user_id}",
-            )
+            # Upsert anchor — safe if the row already exists
+            await _upsert_anchor_row(self.db, dispute_id, doc_ids[0], user_id)
+            # Link remaining docs
+            if len(doc_ids) > 1:
+                await self.link_ar_documents_to_dispute(
+                    dispute_id   = dispute_id,
+                    doc_ids      = doc_ids[1:],
+                    linked_by    = user_id,
+                    context_note = f"Graph chain from anchor doc_id={doc_ids[0]}",
+                )
 
         await self.db.commit()
 
@@ -471,10 +505,13 @@ class ARDocumentService:
         if not rows:
             return []
 
-        # The anchor is the first linked row (chronologically).
-        # replace_anchor_document deletes all rows and re-inserts from the new
-        # anchor, so the first row is always the intended anchor doc.
-        anchor_doc_id = rows[0].doc_id
+        # Find the anchor row: prefer the one explicitly marked "ANCHOR",
+        # fall back to the chronologically first row.
+        anchor_row = next(
+            (r for r in rows if (r.context_note or "").upper() == "ANCHOR"),
+            rows[0],
+        )
+        anchor_doc_id = anchor_row.doc_id
 
         # Load the anchor to get its customer_scope for the graph walk
         anchor_doc = (await self.db.execute(

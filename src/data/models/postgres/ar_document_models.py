@@ -8,9 +8,18 @@ from sqlalchemy import (
     Column, Integer, String, Float, Boolean, Text, Date,
     ForeignKey, TIMESTAMP, UniqueConstraint, Index,
 )
+from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from src.data.models.postgres.base import Base
+
+# Must match the ar_doc_type enum already created in the database.
+# create_type=False → SQLAlchemy will not try to CREATE TYPE, it already exists.
+_AR_DOC_TYPE = PgEnum(
+    "PO", "INVOICE", "GRN", "PAYMENT", "CONTRACT", "CREDIT_NOTE",
+    name="ar_doc_type",
+    create_type=False,
+)
 
 
 class ARDocument(Base):
@@ -18,7 +27,7 @@ class ARDocument(Base):
 
     doc_id         = Column(Integer, primary_key=True)
     customer_scope = Column(String(255), nullable=False)
-    doc_type       = Column(String(20),  nullable=False)   # PO|INVOICE|GRN|PAYMENT|CONTRACT|CREDIT_NOTE
+    doc_type       = Column(_AR_DOC_TYPE,  nullable=False)   # PO|INVOICE|GRN|PAYMENT|CONTRACT|CREDIT_NOTE
     doc_date       = Column(Date,        nullable=True)
     status         = Column(String(20),  nullable=False, default="ACTIVE")
     file_path      = Column(Text,        nullable=True)

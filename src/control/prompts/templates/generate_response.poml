@@ -28,6 +28,11 @@
   <p>## AR Document Chain (PO / GRN / Contract on file)</p>
   <p>{{ doc_chain_ctx }}</p>
 
+  {% if related_dispute_ctx %}
+  <p>## Related Existing Case</p>
+  <p>{{ related_dispute_ctx }}</p>
+  {% endif %}
+
   <p>## Previous Conversation Summary</p>
   <p>{{ memory_ctx }}</p>
 

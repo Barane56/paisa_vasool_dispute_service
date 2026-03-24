@@ -291,22 +291,58 @@ async def node_detect_context_shift(
             "original_dispute_still_active": True,
         }
 
-    # ── Low OR high confidence shift — write FA recommendation ───────────────
-    # Both paths write DisputeForkRecommendation rows.
-    # Low confidence = amber card with lower confidence badge.
-    # High confidence = amber card with higher confidence badge.
-    # The FA decides in both cases — we never auto-fork.
-    logger.info(
-        f"[email_id={email_id}] detect_context_shift: context shift detected "
-        f"(confidence={confidence:.2f}) — writing FA recommendation(s) for "
-        f"dispute_id={existing_id}"
-    )
+    # ── Auto-fork AND write audit recommendation ─────────────────────────────
+    #
+    # Context shifts always auto-create forked disputes.
+    # A DisputeForkRecommendation row is also written (status=ACCEPTED) so the
+    # FA can see the AI's reasoning on the parent dispute's overview tab.
+    # Low-confidence shifts (<0.70) are downgraded to FA-review only (no fork).
+    if confidence < CONFIDENCE_THRESHOLD:
+        logger.info(
+            f"[email_id={email_id}] detect_context_shift: low-confidence shift "
+            f"({confidence:.2f}) — writing PENDING recommendation, no auto-fork"
+        )
+        if db_session:
+            try:
+                from src.data.models.postgres.dispute_models import DisputeForkRecommendation
+                for issue in normalised_issues:
+                    db_session.add(DisputeForkRecommendation(
+                        dispute_id               = existing_id,
+                        email_id                 = email_id,
+                        confidence               = confidence,
+                        reasoning                = reasoning,
+                        suggested_invoice_number = issue.get("invoice_number"),
+                        suggested_type_hint      = issue.get("type_hint"),
+                        suggested_description    = issue.get("description"),
+                        suggested_priority       = issue.get("priority", "MEDIUM"),
+                        status                   = "PENDING",
+                    ))
+                await db_session.flush()
+            except Exception as e:
+                logger.warning(f"[email_id={email_id}] fork rec write failed (non-fatal): {e}")
+        langfuse_context.update_current_observation(
+            output={"is_context_shift": True, "confidence": confidence, "action": "pending_recommendation"}
+        )
+        return {
+            **state,
+            "context_shift_detected":        False,
+            "context_shift_confidence":      confidence,
+            "context_shift_reasoning":       reasoning,
+            "forked_issues":                 [],
+            "original_dispute_still_active": True,
+        }
 
+    # High confidence — auto-fork and log as ACCEPTED recommendation
+    logger.info(
+        f"[email_id={email_id}] detect_context_shift: CONTEXT SHIFT CONFIRMED "
+        f"(confidence={confidence:.2f}, issues={len(normalised_issues)}) — "
+        f"auto-forking for dispute_id={existing_id}"
+    )
     if db_session:
         try:
             from src.data.models.postgres.dispute_models import DisputeForkRecommendation
             for issue in normalised_issues:
-                rec = DisputeForkRecommendation(
+                db_session.add(DisputeForkRecommendation(
                     dispute_id               = existing_id,
                     email_id                 = email_id,
                     confidence               = confidence,
@@ -315,37 +351,27 @@ async def node_detect_context_shift(
                     suggested_type_hint      = issue.get("type_hint"),
                     suggested_description    = issue.get("description"),
                     suggested_priority       = issue.get("priority", "MEDIUM"),
-                    status                   = "PENDING",
-                )
-                db_session.add(rec)
+                    status                   = "ACCEPTED",
+                ))
             await db_session.flush()
-            logger.info(
-                f"[email_id={email_id}] Wrote {len(normalised_issues)} fork "
-                f"recommendation(s) for dispute_id={existing_id}"
-            )
-        except Exception as rec_err:
-            logger.warning(
-                f"[email_id={email_id}] Could not write fork recommendations "
-                f"(non-fatal): {rec_err}"
-            )
+        except Exception as e:
+            logger.warning(f"[email_id={email_id}] fork rec log failed (non-fatal): {e}")
 
     langfuse_context.update_current_observation(
         output={
-            "is_context_shift":           True,
-            "confidence":                 confidence,
-            "new_issues_count":           len(normalised_issues),
-            "action":                     "recommendation_written",
-            "original_dispute_still_active": True,
+            "is_context_shift":              True,
+            "confidence":                    confidence,
+            "new_issues_count":              len(normalised_issues),
+            "action":                        "auto_forked",
+            "original_dispute_still_active": original_still_active,
         }
     )
 
-    # Return context_shift_detected=False so persist_results never auto-forks.
-    # The recommendations are visible via GET /disputes/{id}/fork-recommendations.
     return {
         **state,
-        "context_shift_detected":        False,
+        "context_shift_detected":        True,
         "context_shift_confidence":      confidence,
         "context_shift_reasoning":       reasoning,
-        "forked_issues":                 [],
-        "original_dispute_still_active": True,
+        "forked_issues":                 normalised_issues,
+        "original_dispute_still_active": original_still_active,
     }

@@ -97,6 +97,13 @@ class EmailProcessingState(TypedDict):
     _ownership_unverified:    bool
     token_matched_dispute_id: Optional[int]   # Layer 1: DISP-XXXXX token match
 
+    # ── Related dispute (L2 soft match — same invoice, different issue) ───────
+    # Set when L2 Gate A passes but Gate B similarity is below threshold.
+    # The email gets a NEW case; this dispute is linked as RELATED for context.
+    # Never used for routing — only for LLM context and DisputeRelationship write.
+    related_dispute_id:    Optional[int]
+    related_dispute_token: Optional[str]
+
     # ── Context-shift / fork detection (follow-up emails) ─────────────────────
     context_shift_detected:        bool
     context_shift_confidence:      float
@@ -189,6 +196,8 @@ def build_initial_state(
         "_needs_invoice_details":      False,
         "_ownership_unverified":       False,
         "token_matched_dispute_id":    None,
+        "related_dispute_id":          None,
+        "related_dispute_token":       None,
         "context_shift_detected":      False,
         "context_shift_confidence":    0.0,
         "context_shift_reasoning":     None,

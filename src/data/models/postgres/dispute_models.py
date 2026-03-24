@@ -4,7 +4,7 @@
 #                     DisputeActivityLog, DisputeStatusHistory
 from sqlalchemy import (
     Column, Enum, Integer, String, Text, Boolean, Numeric, BigInteger,
-    TIMESTAMP, ForeignKey, Index, func, text,Float,
+    TIMESTAMP, ForeignKey, Index, func, text, Float, 
     Enum as SQLEnum,
 )
 from sqlalchemy.dialects.postgresql import ARRAY

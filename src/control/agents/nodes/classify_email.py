@@ -48,7 +48,7 @@ _VALID_SUGGESTED_ACTIONS = frozenset({
 # Intents that must NEVER create a new case regardless of anything else
 _NO_NEW_CASE_INTENTS = frozenset({
     "SOCIAL", "IRRELEVANT", "PAYMENT_ADVICE", "RESOLUTION_ACK",
-    "DUPLICATE_CONTACT", "ADVANCE_PAYMENT", "DOCUMENT_REQUEST", "FACTUAL_QUERY",
+    "DUPLICATE_CONTACT", "ADVANCE_PAYMENT", "FACTUAL_QUERY",
 })
 # Intents that trigger immediate FA escalation
 _ESCALATE_INTENTS = frozenset({"LEGAL_THREAT", "ESCALATION", "ABUSIVE"})

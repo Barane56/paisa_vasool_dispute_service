@@ -14,6 +14,7 @@ match_invoice_task          — existing: invoice-payment matching placeholder
 """
 import asyncio
 import logging
+from typing import Optional
 
 from src.control.celery_app import celery_app
 from src.core.exceptions import TaskEnqueueError  # noqa: F401
@@ -143,11 +144,10 @@ def process_live_email_task(self, message_id, existing_dispute_id=None):
             msg = await EmailInboxMessageRepository(session).get_by_id(message_id)
 
             if "google.com" in msg.sender_email:
-                # skip health email from google
-                # msg.processing_status = "PROCESSED"
-                logger.info(f"email id: [{msg.email_inbox_id}] Skipping Google Emails.")
-                return 
-
+                # skip mails from google
+                logger.info(f"email id: [{msg.email_inbox_id}] Skipping Mail from Google.")
+                return
+            
             if not msg:
                 raise Exception(f"EmailInboxMessage {message_id} not found")
 
@@ -286,9 +286,10 @@ def fetch_mailbox_emails_task(self, mailbox_id):
                 sender_lower = ed.get("sender_email", "").lower()
 
                 if "google.com" in sender_lower:
-                    # skipping mails from google
+                    # skip health , no reply mails from google
+                    logger.info("Skipping Mail from Google")
                     continue
-                
+
                 # ── Outbound detection ────────────────────────────────────────
                 # ── Outbound detection ────────────────────────────────────────
                 # An email is OUTBOUND if the sender is any FA/user in our system

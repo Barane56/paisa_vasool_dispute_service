@@ -430,12 +430,16 @@ class DisputeService:
                 )
                 if chain:
                     doc_ids = [d["doc_id"] for d in chain if d.get("doc_id")]
-                    await ar_svc.link_ar_documents_to_dispute(
-                        dispute_id=dispute.dispute_id,
-                        doc_ids=doc_ids,
-                        linked_by=created_by,
-                        context_note=f"FA manual: anchor doc_id={ar_document_id}, scope={scope}",
-                    )
+                    if doc_ids:
+                        from src.core.services.ar_document_service import _upsert_anchor_row
+                        await _upsert_anchor_row(self.db, dispute.dispute_id, doc_ids[0], created_by)
+                        if len(doc_ids) > 1:
+                            await ar_svc.link_ar_documents_to_dispute(
+                                dispute_id   = dispute.dispute_id,
+                                doc_ids      = doc_ids[1:],
+                                linked_by    = created_by,
+                                context_note = f"Graph chain from anchor doc_id={ar_document_id}",
+                            )
                     self.db.add(DisputeActivityLog(
                         dispute_id=dispute.dispute_id,
                         action_type="DOCUMENT_LINKED",

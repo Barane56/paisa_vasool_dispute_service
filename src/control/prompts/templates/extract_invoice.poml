@@ -6,7 +6,9 @@
   </role>
 
   <task>
-    Extract all invoice information from the text below and return it as JSON.
+    Extract ALL invoice information from the text below.
+    The email may reference more than one invoice — return every distinct invoice
+    you find. If there is only one invoice, return a list with a single entry.
   </task>
 
   <p>## Document Text</p>
@@ -17,8 +19,33 @@
     Use null for any field that is not clearly present in the text.
     invoice_date and due_date must be in YYYY-MM-DD format or null.
     All monetary values must be numbers not strings.
+    Every distinct invoice number must appear as its own entry in the list.
   </hint>
 
   <p>## Output Format</p>
-  <p>Return ONLY valid JSON: { "invoice_number": "string or null", "invoice_date": "YYYY-MM-DD or null", "due_date": "YYYY-MM-DD or null", "vendor_name": "string or null", "customer_name": "string or null", "customer_id": "string or null", "line_items": [{"description": "string", "qty": number_or_null, "unit_price": number_or_null, "total": number_or_null}], "subtotal": number_or_null, "tax_amount": number_or_null, "total_amount": number_or_null, "currency": "string or null", "payment_terms": "string or null", "po_number": "string or null", "grn_number": "string or null", "payment_ref": "string or null", "contract_number": "string or null", "notes": "string or null" }</p>
+  <p>Return ONLY valid JSON:
+  {
+    "invoices": [
+      {
+        "invoice_number": "string or null",
+        "invoice_date":   "YYYY-MM-DD or null",
+        "due_date":       "YYYY-MM-DD or null",
+        "vendor_name":    "string or null",
+        "customer_name":  "string or null",
+        "customer_id":    "string or null",
+        "line_items":     [{"description": "string", "qty": number_or_null, "unit_price": number_or_null, "total": number_or_null}],
+        "subtotal":       number_or_null,
+        "tax_amount":     number_or_null,
+        "total_amount":   number_or_null,
+        "currency":       "string or null",
+        "payment_terms":  "string or null",
+        "po_number":      "string or null",
+        "grn_number":     "string or null",
+        "payment_ref":    "string or null",
+        "contract_number": "string or null",
+        "notes":          "string or null"
+      }
+    ]
+  }
+  </p>
 </poml>

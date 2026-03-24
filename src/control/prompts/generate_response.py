@@ -31,7 +31,8 @@ def build_generate_response_prompt(
     is_focused_issue: bool = False,
     focus_invoice_number: Optional[str] = None,
     attachment_metadata: Optional[List[Dict]] = None,
-    ar_document_chain: Optional[List[Dict]] = None,  # related AR docs from graph
+    ar_document_chain: Optional[List[Dict]] = None,
+    related_dispute_token: Optional[str] = None,   # new case on same invoice — mention to customer
 ) -> str:
     inline_issues_ctx = "None"
     if inline_issues and not is_focused_issue:
@@ -72,6 +73,17 @@ def build_generate_response_prompt(
             parts.append(f"  - {doc_type} (dated {doc_date}) linked via: {shared_str}")
         doc_chain_ctx = "Uploaded AR documents linked to this invoice:\n" + "\n".join(parts)
 
+    # Related dispute context — set when L2 Gate B detected a different issue
+    # on the same invoice. The LLM uses this to inform the customer.
+    related_dispute_ctx = ""
+    if related_dispute_token:
+        related_dispute_ctx = (
+            f"NOTE: The customer already has an open case {related_dispute_token} "
+            f"on this same invoice. That case covers a different issue. "
+            f"This is a NEW case. If the customer thinks this is the same issue, "
+            f"ask them to quote {related_dispute_token} in their next reply."
+        )
+
     context = {
         "subject":               subject,
         "sender_email":          sender_email,
@@ -95,6 +107,7 @@ def build_generate_response_prompt(
         "focus_invoice_number":  focus_invoice_number or "not specified",
         "attachment_ctx":        att_ctx,
         "doc_chain_ctx":         doc_chain_ctx,
+        "related_dispute_ctx":   related_dispute_ctx,
     }
 
     messages = render_poml(_TEMPLATE, context)
