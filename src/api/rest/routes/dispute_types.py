@@ -1,16 +1,20 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
 
-from src.data.clients.postgres import get_db
-from src.core.services.dispute_type_service import DisputeTypeService
 from src.api.rest.dependencies import get_current_user
-from src.schemas.schemas import CurrentUser, DisputeTypeResponse, DisputeTypeCreate, SuccessResponse
+from src.core.services.dispute_type_service import DisputeTypeService
+from src.data.clients.postgres import get_db
+from src.schemas.schemas import (
+    CurrentUser,
+    DisputeTypeCreate,
+    DisputeTypeResponse,
+    SuccessResponse,
+)
 
 router = APIRouter(prefix="/dispute-types", tags=["Dispute Types"])
 
 
-@router.get("", response_model=List[DisputeTypeResponse])
+@router.get("", response_model=list[DisputeTypeResponse])
 async def list_dispute_types(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
@@ -31,7 +35,9 @@ async def get_dispute_type(
     return await service.get_by_id(type_id)
 
 
-@router.post("", response_model=DisputeTypeResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=DisputeTypeResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_dispute_type(
     data: DisputeTypeCreate,
     db: AsyncSession = Depends(get_db),

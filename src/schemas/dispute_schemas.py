@@ -1,7 +1,7 @@
 # dispute_schemas.py — Dispute-domain Pydantic schemas
-from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional, List
+
+from pydantic import BaseModel, Field
 
 
 class DisputeTypeResponse(BaseModel):
@@ -22,7 +22,7 @@ class OpenQuestionResponse(BaseModel):
     question_text: str
     status: str
     asked_at: datetime
-    answered_at: Optional[datetime]
+    answered_at: datetime | None
     model_config = {"from_attributes": True}
 
 
@@ -31,21 +31,21 @@ class AIAnalysisResponse(BaseModel):
     predicted_category: str
     confidence_score: float
     ai_summary: str
-    ai_response: Optional[str]
+    ai_response: str | None
     auto_response_generated: bool
     memory_context_used: bool
-    episodes_referenced: Optional[List[int]]
+    episodes_referenced: list[int] | None
     created_at: datetime
     model_config = {"from_attributes": True}
 
 
 class DisputeResponse(BaseModel):
     dispute_id: int
-    email_id: Optional[int]
-    invoice_id: Optional[int]
-    payment_detail_id: Optional[int]
+    email_id: int | None
+    invoice_id: int | None
+    payment_detail_id: int | None
     customer_id: str
-    dispute_type: Optional[DisputeTypeResponse]
+    dispute_type: DisputeTypeResponse | None
     status: str
     priority: str
     description: str
@@ -55,28 +55,28 @@ class DisputeResponse(BaseModel):
 
 
 class DisputeDetailResponse(DisputeResponse):
-    latest_analysis: Optional[AIAnalysisResponse] = None
+    latest_analysis: AIAnalysisResponse | None = None
     open_questions_count: int = 0
-    assigned_to: Optional[str] = None
-    has_new_customer_message: bool = False   # True when latest episode is from CUSTOMER
-    source: str = "EMAIL"                    # EMAIL | FA_MANUAL
-    dispute_token: Optional[str] = None
-    parent_dispute_id: Optional[int] = None
+    assigned_to: str | None = None
+    has_new_customer_message: bool = False  # True when latest episode is from CUSTOMER
+    source: str = "EMAIL"  # EMAIL | FA_MANUAL
+    dispute_token: str | None = None
+    parent_dispute_id: int | None = None
 
 
 class DisputeListResponse(BaseModel):
     total: int
-    items: List[DisputeDetailResponse]
+    items: list[DisputeDetailResponse]
 
 
 class DisputeStatusUpdate(BaseModel):
     status: str
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 class DisputeAssignRequest(BaseModel):
     user_id: int
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 class DisputeAssignmentResponse(BaseModel):
@@ -91,21 +91,22 @@ class DisputeAssignmentResponse(BaseModel):
 
 class TimelineAttachment(BaseModel):
     """A single attachment linked to a timeline episode."""
+
     attachment_id: int
     file_name: str
     file_type: str
-    download_url: str          # ready-to-use URL path for the frontend
-    source: str                # "inbound" | "outbound"
+    download_url: str  # ready-to-use URL path for the frontend
+    source: str  # "inbound" | "outbound"
 
 
 class TimelineEpisodeResponse(BaseModel):
     episode_id: int
     actor: str
-    actor_name: Optional[str] = None   # populated for ASSOCIATE episodes (FA real name)
+    actor_name: str | None = None  # populated for ASSOCIATE episodes (FA real name)
     episode_type: str
     content_text: str
     created_at: datetime
-    attachments: List[TimelineAttachment] = []
+    attachments: list[TimelineAttachment] = []
     model_config = {"from_attributes": True}
 
 
@@ -113,9 +114,9 @@ class DisputeTimelineResponse(BaseModel):
     dispute_id: int
     customer_id: str
     status: str
-    timeline: List[TimelineEpisodeResponse]
+    timeline: list[TimelineEpisodeResponse]
     pending_questions: int
-    assigned_to: Optional[str]
+    assigned_to: str | None
 
 
 class MemorySummaryResponse(BaseModel):
@@ -129,7 +130,7 @@ class MemorySummaryResponse(BaseModel):
 
 class QuestionStatusUpdate(BaseModel):
     status: str  # ANSWERED or EXPIRED
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 class SupportingRefResponse(BaseModel):
@@ -143,15 +144,20 @@ class SupportingRefResponse(BaseModel):
 
 class SupportingRefCreate(BaseModel):
     analysis_id: int
-    reference_table: str = Field(..., description="Table name, e.g. 'payment_detail', 'invoice_data', 'email_attachments'")
+    reference_table: str = Field(
+        ...,
+        description="Table name, e.g. 'payment_detail', 'invoice_data', 'email_attachments'",
+    )
     ref_id_value: int = Field(..., description="Primary key value in reference_table")
-    context_note: str = Field(..., description="Why this document supports the analysis")
+    context_note: str = Field(
+        ..., description="Why this document supports the analysis"
+    )
 
 
 class SupportingRefListResponse(BaseModel):
     dispute_id: int
     total: int
-    items: List[SupportingRefResponse]
+    items: list[SupportingRefResponse]
 
 
 class DraftEmailResponse(BaseModel):
@@ -163,43 +169,62 @@ class DraftEmailResponse(BaseModel):
 
 # ── FA Manual Dispute Creation ────────────────────────────────────────────────
 
+
 class FADisputeCreate(BaseModel):
-    customer_id:      str              = Field(..., min_length=1, max_length=100)
-    customer_email:   Optional[str]    = Field(None, description="Customer email address — used to scope AR document graph lookup.")
-    dispute_type_id:  Optional[int]    = Field(None, description="Existing dispute type ID. If None, provide custom_type_name.")
-    custom_type_name: Optional[str]    = Field(None, min_length=2, max_length=100, description="New dispute type name if no existing type fits.")
-    custom_type_desc: Optional[str]    = Field(None, description="Description for the new custom dispute type.")
-    priority:         str              = Field("MEDIUM", pattern="^(LOW|MEDIUM|HIGH)$")
-    description:      str              = Field(..., min_length=5)
-    invoice_id:       Optional[int]    = None
-    ar_document_id:   Optional[int]    = Field(None, description="AR document (PO/GRN/Contract) to pre-link to this dispute via graph lookup.")
-    notes:            Optional[str]    = None
+    customer_id: str = Field(..., min_length=1, max_length=100)
+    customer_email: str | None = Field(
+        None,
+        description="Customer email address — used to scope AR document graph lookup.",
+    )
+    dispute_type_id: int | None = Field(
+        None, description="Existing dispute type ID. If None, provide custom_type_name."
+    )
+    custom_type_name: str | None = Field(
+        None,
+        min_length=2,
+        max_length=100,
+        description="New dispute type name if no existing type fits.",
+    )
+    custom_type_desc: str | None = Field(
+        None, description="Description for the new custom dispute type."
+    )
+    priority: str = Field("MEDIUM", pattern="^(LOW|MEDIUM|HIGH)$")
+    description: str = Field(..., min_length=5)
+    invoice_id: int | None = None
+    ar_document_id: int | None = Field(
+        None,
+        description="AR document (PO/GRN/Contract) to pre-link to this dispute via graph lookup.",
+    )
+    notes: str | None = None
 
     @classmethod
     def validate_type(cls, v: "FADisputeCreate") -> "FADisputeCreate":
         if v.dispute_type_id is None and not v.custom_type_name:
-            raise ValueError("Either dispute_type_id or custom_type_name must be provided")
+            raise ValueError(
+                "Either dispute_type_id or custom_type_name must be provided"
+            )
         return v
 
 
 # ── Dispute Supporting Documents ──────────────────────────────────────────────
 
+
 class DisputeDocumentResponse(BaseModel):
-    document_id:  int
-    dispute_id:   int
-    uploaded_by:  int
-    uploader_name: Optional[str] = None
-    file_name:    str
-    file_type:    str
-    file_size:    Optional[int]
-    display_name: Optional[str]
-    notes:        Optional[str]
-    download_url: str             # signed GCS URL or local download path
-    created_at:   datetime
-    model_config  = {"from_attributes": True}
+    document_id: int
+    dispute_id: int
+    uploaded_by: int
+    uploader_name: str | None = None
+    file_name: str
+    file_type: str
+    file_size: int | None
+    display_name: str | None
+    notes: str | None
+    download_url: str  # signed GCS URL or local download path
+    created_at: datetime
+    model_config = {"from_attributes": True}
 
 
 class DisputeDocumentListResponse(BaseModel):
     dispute_id: int
-    total:      int
-    items:      List[DisputeDocumentResponse]
+    total: int
+    items: list[DisputeDocumentResponse]

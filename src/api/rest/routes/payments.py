@@ -1,17 +1,16 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
 
+from src.api.rest.dependencies import get_current_user
+from src.core.exceptions import PaymentNotFoundError
 from src.data.clients.postgres import get_db
 from src.data.repositories.repositories import PaymentRepository
-from src.api.rest.dependencies import get_current_user
 from src.schemas.schemas import (
     CurrentUser,
-    PaymentDetailResponse,
-    PaymentDetailListResponse,
     CustomerPaymentListResponse,
+    PaymentDetailListResponse,
+    PaymentDetailResponse,
 )
-from src.core.exceptions import PaymentNotFoundError
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
@@ -50,7 +49,9 @@ async def get_payments_by_customer(
     Useful for reviewing a customer's complete payment history.
     """
     repo = PaymentRepository(db)
-    items, total = await repo.get_all_by_customer(customer_id, limit=limit, offset=offset)
+    items, total = await repo.get_all_by_customer(
+        customer_id, limit=limit, offset=offset
+    )
     return CustomerPaymentListResponse(
         customer_id=customer_id,
         total=total,

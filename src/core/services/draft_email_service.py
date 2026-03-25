@@ -3,10 +3,10 @@ src/core/services/draft_email_service.py
 =========================================
 Generates a professional AI email draft for a Finance Associate using Groq.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,37 +35,41 @@ async def generate_draft_email(
     dispute_id: int,
     db: AsyncSession,
     customer_id: str,
-    dispute_type: Optional[str],
+    dispute_type: str | None,
     status: str,
     priority: str,
-    ai_summary: Optional[str],
-    fa_name: Optional[str] = None,
+    ai_summary: str | None,
+    fa_name: str | None = None,
 ) -> str:
-    ep_repo  = MemoryEpisodeRepository(db)
+    ep_repo = MemoryEpisodeRepository(db)
     episodes = await ep_repo.get_episodes_for_dispute(dispute_id)
 
     transcript_lines = []
     for ep in episodes:
         role_map = {
-            "CUSTOMER":  f"Customer ({customer_id})",
-            "AI":        "AI Auto-Response",
+            "CUSTOMER": f"Customer ({customer_id})",
+            "AI": "AI Auto-Response",
             "ASSOCIATE": "Finance Associate",
-            "SYSTEM":    "System",
+            "SYSTEM": "System",
         }
         role = role_map.get(ep.actor, ep.actor)
-        dt   = ep.created_at.strftime("%d %b %Y %H:%M")
+        dt = ep.created_at.strftime("%d %b %Y %H:%M")
         transcript_lines.append(f"[{dt}] {role}:\n{ep.content_text}")
 
-    transcript = "\n\n---\n\n".join(transcript_lines) if transcript_lines else "No conversation history yet."
+    transcript = (
+        "\n\n---\n\n".join(transcript_lines)
+        if transcript_lines
+        else "No conversation history yet."
+    )
 
     user_prompt = f"""\
 Dispute Details:
 - Dispute ID: #{dispute_id}
-- Dispute Type: {dispute_type or 'Unknown'}
+- Dispute Type: {dispute_type or "Unknown"}
 - Customer ID: {customer_id}
 - Status: {status}
 - Priority: {priority}
-{f'- AI Summary: {ai_summary}' if ai_summary else ''}
+{f"- AI Summary: {ai_summary}" if ai_summary else ""}
 
 Full Conversation History:
 {transcript}

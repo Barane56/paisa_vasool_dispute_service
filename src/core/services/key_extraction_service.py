@@ -18,19 +18,20 @@ Keys extracted:
   po_number, inv_number, grn_number,
   contract_number, payment_ref, credit_note_number
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Normalization
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def normalize_ref(value: str) -> str:
     """Strip non-alphanumeric and uppercase — deterministic linking key."""
@@ -44,41 +45,51 @@ def normalize_ref(value: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # All label variants that appear in our generated PDFs
-_LABEL_MAP: dict[str, Optional[str]] = {
-    "po no":              "po_number",
-    "purchase order no":  "po_number",
-    "invoice no":         "inv_number",
-    "tax invoice no":     "inv_number",
-    "bill no":            "inv_number",
-    "ref invoice no":     "inv_number",
-    "grn no":             "grn_number",
-    "grn number":         "grn_number",
-    "delivery note no":   "grn_number",
-    "receipt no":         "grn_number",
-    "contract no":        "contract_number",
-    "rate contract no":   "contract_number",
-    "agreement no":       "contract_number",
-    "payment ref":        "payment_ref",
-    "utr":                "payment_ref",
-    "neft ref":           "payment_ref",
-    "rtgs ref":           "payment_ref",
-    "credit note no":     "credit_note_number",
-    "cn no":              "credit_note_number",
-    "debit note no":      "credit_note_number",
+_LABEL_MAP: dict[str, str | None] = {
+    "po no": "po_number",
+    "purchase order no": "po_number",
+    "invoice no": "inv_number",
+    "tax invoice no": "inv_number",
+    "bill no": "inv_number",
+    "ref invoice no": "inv_number",
+    "grn no": "grn_number",
+    "grn number": "grn_number",
+    "delivery note no": "grn_number",
+    "receipt no": "grn_number",
+    "contract no": "contract_number",
+    "rate contract no": "contract_number",
+    "agreement no": "contract_number",
+    "payment ref": "payment_ref",
+    "utr": "payment_ref",
+    "neft ref": "payment_ref",
+    "rtgs ref": "payment_ref",
+    "credit note no": "credit_note_number",
+    "cn no": "credit_note_number",
+    "debit note no": "credit_note_number",
     # These appear as labels but values are dates/text — map to None to skip
-    "po date":            None,
-    "invoice date":       None,
-    "due date":           None,
-    "grn date":           None,
-    "payment date":       None,
-    "date":               None,
-    "valid until":        None,
+    "po date": None,
+    "invoice date": None,
+    "due date": None,
+    "grn date": None,
+    "payment date": None,
+    "date": None,
+    "valid until": None,
 }
 
 _DATE_RE = re.compile(r"^\d{1,2}[-/]\w{2,}[-/]\d{2,4}$")
-_REF_RE  = re.compile(r"^[A-Z]{1,}[A-Z0-9/\-]*\d+", re.IGNORECASE)
-_SKIP    = {"accepted","pending","cleared","partial","full","advance","n/a",
-            "conditional acceptance","status","description"}
+_REF_RE = re.compile(r"^[A-Z]{1,}[A-Z0-9/\-]*\d+", re.IGNORECASE)
+_SKIP = {
+    "accepted",
+    "pending",
+    "cleared",
+    "partial",
+    "full",
+    "advance",
+    "n/a",
+    "conditional acceptance",
+    "status",
+    "description",
+}
 
 
 def _norm_label(s: str) -> str:
@@ -87,9 +98,12 @@ def _norm_label(s: str) -> str:
 
 def _is_ref_value(s: str) -> bool:
     s = s.strip()
-    if _DATE_RE.match(s):           return False
-    if s.lower() in _SKIP:          return False
-    if len(s) < 3:                  return False
+    if _DATE_RE.match(s):
+        return False
+    if s.lower() in _SKIP:
+        return False
+    if len(s) < 3:
+        return False
     return bool(_REF_RE.match(s))
 
 
@@ -98,8 +112,8 @@ def _extract_tabular(text: str) -> dict[str, str]:
     Scan for runs of known label lines, then map each label's
     positional offset to the corresponding value line below.
     """
-    lines  = [l.strip() for l in text.split("\n") if l.strip()]
-    n      = len(lines)
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    n = len(lines)
     result: dict[str, str] = {}
     i = 0
 
@@ -110,7 +124,7 @@ def _extract_tabular(text: str) -> dict[str, str]:
             continue
 
         # Collect the full label block starting at i
-        labels: list[tuple[Optional[str], int]] = []  # (key_type, offset)
+        labels: list[tuple[str | None, int]] = []  # (key_type, offset)
         j = i
         while j < n and _norm_label(lines[j]) in _LABEL_MAP:
             key_type = _LABEL_MAP[_norm_label(lines[j])]
@@ -190,7 +204,7 @@ def _extract_anchors(text: str) -> dict[str, str]:
         for pattern in patterns:
             m = re.search(pattern, text, re.IGNORECASE)
             if m:
-                raw  = m.group(1).strip().rstrip(".:,")
+                raw = m.group(1).strip().rstrip(".:,")
                 norm = normalize_ref(raw)
                 if len(norm) >= _MIN_NORM and _is_ref_value(raw):
                     results[key_type] = raw
@@ -242,22 +256,29 @@ async def _validate_via_llm(
     """LLM validates stage-1 and fills gaps. Returns merged results."""
     try:
         from src.handlers.http_clients.llm_client import get_llm_client
+
         client = get_llm_client()
 
         prompt = _LLM_PROMPT.format(
-            doc_type    = doc_type,
-            text        = text[:3000],
-            stage1_json = json.dumps(stage1, indent=2),
+            doc_type=doc_type,
+            text=text[:3000],
+            stage1_json=json.dumps(stage1, indent=2),
         )
         raw = await client.chat_fast(
-            prompt = prompt,
-            system = "You are a precise AR document parser. Return only valid JSON. No markdown.",
-            json_mode = True,
+            prompt=prompt,
+            system="You are a precise AR document parser. Return only valid JSON. No markdown.",
+            json_mode=True,
         )
         parsed = json.loads(raw) if isinstance(raw, str) else raw
         results: dict[str, str] = {}
-        for key_type in ("po_number","inv_number","grn_number",
-                         "contract_number","payment_ref","credit_note_number"):
+        for key_type in (
+            "po_number",
+            "inv_number",
+            "grn_number",
+            "contract_number",
+            "payment_ref",
+            "credit_note_number",
+        ):
             val = parsed.get(key_type)
             if val and isinstance(val, str):
                 raw_val = val.strip().rstrip(".:,")
@@ -273,18 +294,20 @@ async def _validate_via_llm(
 # ExtractedKey dataclass
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class ExtractedKey:
-    key_type:       str
-    key_value_raw:  str
+    key_type: str
+    key_value_raw: str
     key_value_norm: str
-    confidence:     float
-    source:         str  # "tabular" | "regex" | "llm" | "manual"
+    confidence: float
+    source: str  # "tabular" | "regex" | "llm" | "manual"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Public entry point
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 async def extract_document_keys(text: str, doc_type: str) -> list[ExtractedKey]:
     """
@@ -316,21 +339,23 @@ async def extract_document_keys(text: str, doc_type: str) -> list[ExtractedKey]:
     for key_type, raw_val in final.items():
         # Determine source
         if key_type in tabular and tabular[key_type] == raw_val:
-            source     = "regex"   # "tabular" shown as regex to FA — both deterministic
+            source = "regex"  # "tabular" shown as regex to FA — both deterministic
             confidence = 0.97
         elif key_type in anchors and anchors[key_type] == raw_val:
-            source     = "regex"
+            source = "regex"
             confidence = 0.93
         else:
-            source     = "llm"
+            source = "llm"
             confidence = 0.80
 
-        keys.append(ExtractedKey(
-            key_type       = key_type,
-            key_value_raw  = raw_val,
-            key_value_norm = normalize_ref(raw_val),
-            confidence     = confidence,
-            source         = source,
-        ))
+        keys.append(
+            ExtractedKey(
+                key_type=key_type,
+                key_value_raw=raw_val,
+                key_value_norm=normalize_ref(raw_val),
+                confidence=confidence,
+                source=source,
+            )
+        )
 
     return keys

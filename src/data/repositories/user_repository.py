@@ -1,20 +1,22 @@
 # user_repository.py — UserRepository, UserRoleRepository
-from typing import Optional, List
-from sqlalchemy import select, func
+
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.data.models.postgres import Role, User, UserRole
+
 from .base import BaseRepository
-from src.data.models.postgres import User, UserRole, Role
 
 
 class UserRepository(BaseRepository[User]):
     def __init__(self, db: AsyncSession):
         super().__init__(User, db)
 
-    async def get_by_id(self, user_id: int, **kwargs) -> Optional[User]:
+    async def get_by_id(self, user_id: int, **kwargs) -> User | None:
         result = await self.db.execute(select(User).where(User.user_id == user_id))
         return result.scalar_one_or_none()
 
-    async def get_by_email(self, email: str) -> Optional[User]:
+    async def get_by_email(self, email: str) -> User | None:
         result = await self.db.execute(select(User).where(User.email == email))
         return result.scalar_one_or_none()
 
@@ -23,7 +25,7 @@ class UserRoleRepository(BaseRepository[UserRole]):
     def __init__(self, db: AsyncSession):
         super().__init__(UserRole, db)
 
-    async def get_all_fa(self) -> List[int]:
+    async def get_all_fa(self) -> list[int]:
         """Return up to 10 random finance-associate user IDs (non-admin)."""
         stmt = await self.db.execute(select(Role).where(Role.role_name == "admin"))
         admin_role = stmt.scalar_one_or_none()

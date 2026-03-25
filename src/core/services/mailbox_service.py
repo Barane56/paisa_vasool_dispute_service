@@ -1,27 +1,31 @@
 """
 src/core/services/mailbox_service.py
 """
+
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.exceptions.errors import ResourceNotFoundError
+from src.core.exceptions.errors import ValidationError as PVValidationError
 from src.core.services.imap_service import encode_password, test_mailbox_connection
 from src.core.services.smtp_service import test_smtp_connection
-from src.core.exceptions.errors import ResourceNotFoundError, ValidationError as PVValidationError
-from src.data.repositories.mailbox_repository import MailboxRepository, EmailInboxMessageRepository
-from src.data.models.postgres.mailbox_models import MailboxCredential, EmailInboxMessage
+from src.data.models.postgres.mailbox_models import EmailInboxMessage, MailboxCredential
+from src.data.repositories.mailbox_repository import (
+    EmailInboxMessageRepository,
+    MailboxRepository,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class MailboxService:
     def __init__(self, db: AsyncSession):
-        self.repo     = MailboxRepository(db)
+        self.repo = MailboxRepository(db)
         self.msg_repo = EmailInboxMessageRepository(db)
-        self.db       = db
+        self.db = db
 
     # ── CRUD ─────────────────────────────────────────────────────────────────
 
@@ -33,13 +37,15 @@ class MailboxService:
         imap_port: int,
         use_ssl: bool,
         password: str,
-        smtp_host: Optional[str] = None,
+        smtp_host: str | None = None,
         smtp_port: int = 587,
         smtp_use_tls: bool = True,
     ) -> MailboxCredential:
         existing = await self.repo.get_by_email(email_address)
         if existing:
-            raise PVValidationError(f"Mailbox {email_address} already exists (id={existing.mailbox_id})")
+            raise PVValidationError(
+                f"Mailbox {email_address} already exists (id={existing.mailbox_id})"
+            )
 
         mb = MailboxCredential(
             label=label,
@@ -58,7 +64,7 @@ class MailboxService:
         logger.info(f"Mailbox added: {email_address} (id={mb.mailbox_id})")
         return mb
 
-    async def list_mailboxes(self) -> List[MailboxCredential]:
+    async def list_mailboxes(self) -> list[MailboxCredential]:
         return await self.repo.list_all()
 
     async def get_mailbox(self, mailbox_id: int) -> MailboxCredential:
@@ -111,13 +117,16 @@ class MailboxService:
 
     async def list_inbox(
         self,
-        mailbox_id: Optional[int] = None,
-        source: Optional[str] = None,
+        mailbox_id: int | None = None,
+        source: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> List[EmailInboxMessage]:
+    ) -> list[EmailInboxMessage]:
         return await self.msg_repo.list_inbox(
-            mailbox_id=mailbox_id, source=source, limit=limit, offset=offset,
+            mailbox_id=mailbox_id,
+            source=source,
+            limit=limit,
+            offset=offset,
         )
 
     async def get_message(self, message_id: int) -> EmailInboxMessage:
@@ -126,35 +135,47 @@ class MailboxService:
             raise ResourceNotFoundError("EmailInboxMessage", message_id)
         return msg
 
-    async def list_messages_for_dispute(self, dispute_id: int) -> List[EmailInboxMessage]:
+    async def list_messages_for_dispute(
+        self, dispute_id: int
+    ) -> list[EmailInboxMessage]:
         return await self.msg_repo.list_for_dispute(dispute_id)
 
     async def get_inbound_attachment(self, attachment_id: int):
         """Fetch an inbound EmailMessageAttachment record by ID."""
         from sqlalchemy import select
+
         from src.data.models.postgres.mailbox_models import EmailMessageAttachment
+
         result = await self.db.execute(
-            select(EmailMessageAttachment)
-            .where(EmailMessageAttachment.attachment_id == attachment_id)
+            select(EmailMessageAttachment).where(
+                EmailMessageAttachment.attachment_id == attachment_id
+            )
         )
         att = result.scalar_one_or_none()
         if not att:
             from src.core.exceptions import ResourceNotFoundError
+
             raise ResourceNotFoundError("EmailMessageAttachment", attachment_id)
         return att
 
     async def get_outbound_email_by_id(self, outbound_id: int):
         """Fetch a single OutboundEmail with attachments and sender."""
         from sqlalchemy import select
-        from sqlalchemy.orm import selectinload, joinedload
+        from sqlalchemy.orm import joinedload, selectinload
+
         from src.data.models.postgres.mailbox_models import OutboundEmail
+
         result = await self.db.execute(
             select(OutboundEmail)
-            .options(selectinload(OutboundEmail.attachments), joinedload(OutboundEmail.sender))
+            .options(
+                selectinload(OutboundEmail.attachments),
+                joinedload(OutboundEmail.sender),
+            )
             .where(OutboundEmail.outbound_id == outbound_id)
         )
         email = result.scalar_one_or_none()
         if not email:
             from src.core.exceptions import ResourceNotFoundError
+
             raise ResourceNotFoundError("OutboundEmail", outbound_id)
         return email

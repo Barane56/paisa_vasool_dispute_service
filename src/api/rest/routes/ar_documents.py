@@ -3,25 +3,29 @@ src/api/rest/routes/ar_documents.py
 =====================================
 AR Document Graph endpoints.
 """
+
 from __future__ import annotations
-from fastapi import APIRouter, Depends, File, Form, UploadFile, HTTPException, status
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
 
-from src.data.clients.postgres import get_db
-from src.core.services.ar_document_service import ARDocumentService, resolve_customer_scope
-from src.schemas.common_schemas import CurrentUser
 from src.api.rest.dependencies import get_current_user
+from src.core.services.ar_document_service import (
+    ARDocumentService,
+    resolve_customer_scope,
+)
+from src.data.clients.postgres import get_db
+from src.schemas.common_schemas import CurrentUser
 
 router = APIRouter(prefix="/ar-documents", tags=["AR Documents"])
 
 
 @router.get("")
 async def list_documents_for_customer(
-    customer_email: str          = None,
-    db:             AsyncSession = Depends(get_db),
-    current_user:   CurrentUser  = Depends(get_current_user),
+    customer_email: str = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     List all AR documents for a given customer scope.
@@ -29,32 +33,34 @@ async def list_documents_for_customer(
     customer_email is required — scoped to that customer's graph partition.
     """
     if not customer_email:
-        raise HTTPException(status_code=400, detail="customer_email query param is required")
-    svc   = ARDocumentService(db)
+        raise HTTPException(
+            status_code=400, detail="customer_email query param is required"
+        )
+    svc = ARDocumentService(db)
     scope = resolve_customer_scope(customer_email)
-    docs  = await svc.list_for_customer(scope)
+    docs = await svc.list_for_customer(scope)
     return docs
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def upload_document(
-    file:           UploadFile       = File(...),
-    doc_type:       str              = Form(...),
-    customer_email: str              = Form(...),
-    doc_date:       Optional[str]    = Form(None),
-    db:             AsyncSession     = Depends(get_db),
-    current_user:   CurrentUser      = Depends(get_current_user),
+    file: UploadFile = File(...),
+    doc_type: str = Form(...),
+    customer_email: str = Form(...),
+    doc_date: str | None = Form(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Upload an AR document (PO, Invoice, GRN, Payment, Contract, Credit Note)."""
     try:
-        svc    = ARDocumentService(db)
-        scope  = resolve_customer_scope(customer_email)
+        svc = ARDocumentService(db)
+        scope = resolve_customer_scope(customer_email)
         result = await svc.upload_document(
-            file           = file,
-            doc_type       = doc_type.upper(),
-            customer_scope = scope,
-            doc_date       = doc_date,
-            uploaded_by    = current_user.user_id,
+            file=file,
+            doc_type=doc_type.upper(),
+            customer_scope=scope,
+            doc_date=doc_date,
+            uploaded_by=current_user.user_id,
         )
         return result
     except ValueError as e:
@@ -63,11 +69,11 @@ async def upload_document(
 
 @router.get("/{doc_id}")
 async def get_document(
-    doc_id:       int,
-    db:           AsyncSession = Depends(get_db),
-    current_user: CurrentUser  = Depends(get_current_user),
+    doc_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
-    svc    = ARDocumentService(db)
+    svc = ARDocumentService(db)
     result = await svc.get_document(doc_id)
     if not result:
         raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
@@ -76,10 +82,10 @@ async def get_document(
 
 @router.get("/{doc_id}/download")
 async def download_ar_document(
-    doc_id:       int,
-    mode:         str          = "view",   # "view" | "save"
-    db:           AsyncSession = Depends(get_db),
-    current_user: CurrentUser  = Depends(get_current_user),
+    doc_id: int,
+    mode: str = "view",  # "view" | "save"
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Serve the raw file for an AR document.
@@ -92,10 +98,11 @@ async def download_ar_document(
     mode=view → Content-Disposition: inline  (browser renders PDF/images in-tab)
     mode=save → Content-Disposition: attachment  (force download)
     """
-    import mimetypes
-    from fastapi.responses import StreamingResponse, RedirectResponse
-    from fastapi import HTTPException
     import io
+    import mimetypes
+
+    from fastapi import HTTPException
+    from fastapi.responses import RedirectResponse, StreamingResponse
 
     svc = ARDocumentService(db)
 
@@ -117,21 +124,21 @@ async def download_ar_document(
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-    media_type  = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     disposition = "inline" if mode == "view" else "attachment"
 
     return StreamingResponse(
-        content    = io.BytesIO(file_bytes),
-        media_type = media_type,
-        headers    = {"Content-Disposition": f'{disposition}; filename="{filename}"'},
+        content=io.BytesIO(file_bytes),
+        media_type=media_type,
+        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
     )
 
 
 @router.get("/{doc_id}/related")
 async def get_related_documents(
-    doc_id:       int,
-    db:           AsyncSession = Depends(get_db),
-    current_user: CurrentUser  = Depends(get_current_user),
+    doc_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Return all documents connected to this one via shared reference keys."""
     svc = ARDocumentService(db)
@@ -139,20 +146,31 @@ async def get_related_documents(
 
 
 class ManualKeyRequest(BaseModel):
-    key_type:      str
+    key_type: str
     key_value_raw: str
+
 
 @router.post("/{doc_id}/keys")
 async def add_manual_key(
-    doc_id:       int,
-    body:         ManualKeyRequest,
-    db:           AsyncSession = Depends(get_db),
-    current_user: CurrentUser  = Depends(get_current_user),
+    doc_id: int,
+    body: ManualKeyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """FA manually adds or corrects a reference key on a document."""
-    valid_types = {"po_number", "inv_number", "grn_number",
-                   "contract_number", "payment_ref", "credit_note_number"}
+    valid_types = {
+        "po_number",
+        "inv_number",
+        "grn_number",
+        "contract_number",
+        "payment_ref",
+        "credit_note_number",
+    }
     if body.key_type not in valid_types:
-        raise HTTPException(status_code=400, detail=f"Invalid key_type '{body.key_type}'")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid key_type '{body.key_type}'"
+        )
     svc = ARDocumentService(db)
-    return await svc.add_manual_key(doc_id, body.key_type, body.key_value_raw, current_user.user_id)
+    return await svc.add_manual_key(
+        doc_id, body.key_type, body.key_value_raw, current_user.user_id
+    )

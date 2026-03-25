@@ -13,11 +13,12 @@ layers (invoice match → embedding search → manual queue) take over.
 """
 
 from __future__ import annotations
-import re
-import logging
 
-from src.observability import observe, langfuse_context
+import logging
+import re
+
 from src.control.agents.state import EmailProcessingState
+from src.observability import langfuse_context, observe
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +46,13 @@ async def node_resolve_token(
     Scan subject + body (+ attachments) for a DISP-XXXXX token.
     If found, look it up in the DB and short-circuit to the matched dispute.
     """
-    search_text = " ".join([
-        state.get("subject", ""),
-        state.get("body_text", ""),
-        *state.get("attachment_texts", []),
-    ])
+    search_text = " ".join(
+        [
+            state.get("subject", ""),
+            state.get("body_text", ""),
+            *state.get("attachment_texts", []),
+        ]
+    )
 
     token = _extract_token(search_text)
 
@@ -71,10 +74,15 @@ async def node_resolve_token(
         )
         return {**state, "token_matched_dispute_id": None}
 
-    from src.data.repositories.repositories import DisputeRepository, MemoryEpisodeRepository, MemorySummaryRepository, OpenQuestionRepository
+    from src.data.repositories.repositories import (
+        DisputeRepository,
+        MemoryEpisodeRepository,
+        MemorySummaryRepository,
+        OpenQuestionRepository,
+    )
 
     dispute_repo = DisputeRepository(db_session)
-    dispute      = await dispute_repo.get_by_dispute_token(token)
+    dispute = await dispute_repo.get_by_dispute_token(token)
 
     if not dispute:
         logger.warning(
@@ -92,45 +100,44 @@ async def node_resolve_token(
     )
 
     # Reload memory so downstream nodes have full context
-    recent_episodes    = []
-    memory_summary     = state.get("memory_summary")
-    pending_questions  = []
+    recent_episodes = []
+    memory_summary = state.get("memory_summary")
+    pending_questions = []
 
-    ep_repo    = MemoryEpisodeRepository(db_session)
+    ep_repo = MemoryEpisodeRepository(db_session)
     recent_eps = await ep_repo.get_latest_n(dispute_id, n=5)
     recent_episodes = [
         {"actor": ep.actor, "type": ep.episode_type, "text": ep.content_text[:400]}
         for ep in recent_eps
     ]
 
-    sum_repo    = MemorySummaryRepository(db_session)
+    sum_repo = MemorySummaryRepository(db_session)
     summary_obj = await sum_repo.get_for_dispute(dispute_id)
     if summary_obj:
         memory_summary = summary_obj.summary_text
 
-    q_repo     = OpenQuestionRepository(db_session)
+    q_repo = OpenQuestionRepository(db_session)
     pending_qs = await q_repo.get_pending_for_dispute(dispute_id)
     pending_questions = [
-        {"question_id": q.question_id, "text": q.question_text}
-        for q in pending_qs
+        {"question_id": q.question_id, "text": q.question_text} for q in pending_qs
     ]
 
     langfuse_context.update_current_observation(
         output={
-            "token_found":  True,
-            "token":        token,
-            "db_match":     True,
-            "dispute_id":   dispute_id,
+            "token_found": True,
+            "token": token,
+            "db_match": True,
+            "dispute_id": dispute_id,
         }
     )
 
     return {
         **state,
         "token_matched_dispute_id": dispute_id,
-        "existing_dispute_id":      dispute_id,
-        "recent_episodes":          recent_episodes,
-        "memory_summary":           memory_summary,
-        "pending_questions":        pending_questions,
+        "existing_dispute_id": dispute_id,
+        "recent_episodes": recent_episodes,
+        "memory_summary": memory_summary,
+        "pending_questions": pending_questions,
         # Carry over customer_id from the original dispute if not yet known
         "customer_id": state.get("customer_id") or dispute.customer_id,
     }

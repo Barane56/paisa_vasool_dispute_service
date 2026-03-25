@@ -1,6 +1,7 @@
 # common_schemas.py — shared/utility Pydantic schemas
+from typing import Any
+
 from pydantic import BaseModel
-from typing import Optional, Any
 
 
 class CurrentUser(BaseModel):
@@ -12,13 +13,13 @@ class CurrentUser(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: str
-    detail: Optional[Any] = None
+    detail: Any | None = None
     status_code: int
 
 
 class SuccessResponse(BaseModel):
     message: str
-    data: Optional[Any] = None
+    data: Any | None = None
 
 
 class TaskResponse(BaseModel):

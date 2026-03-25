@@ -26,24 +26,40 @@ Using the payment's customer_id would silently mis-assign the dispute.
 """
 
 from __future__ import annotations
-import logging
-from typing import List, Optional
 
-from src.observability import observe, langfuse_context
+import logging
+
 from src.control.agents.state import EmailProcessingState
+from src.observability import langfuse_context, observe
 
 logger = logging.getLogger(__name__)
 
 # Domains that are generic mail providers — don't use as customer_id
-_GENERIC_DOMAINS = frozenset({
-    "gmail", "yahoo", "hotmail", "outlook", "rediffmail",
-    "icloud", "protonmail", "live", "msn", "aol",
-    "ymail", "googlemail", "mail", "inbox", "zoho",
-    "tutanota", "fastmail", "pm",
-})
+_GENERIC_DOMAINS = frozenset(
+    {
+        "gmail",
+        "yahoo",
+        "hotmail",
+        "outlook",
+        "rediffmail",
+        "icloud",
+        "protonmail",
+        "live",
+        "msn",
+        "aol",
+        "ymail",
+        "googlemail",
+        "mail",
+        "inbox",
+        "zoho",
+        "tutanota",
+        "fastmail",
+        "pm",
+    }
+)
 
 
-def _extract_domain(email: str) -> Optional[str]:
+def _extract_domain(email: str) -> str | None:
     """Return the domain part of an email, lowercased."""
     if not email or "@" not in email:
         return None
@@ -57,7 +73,9 @@ def _is_generic_domain(domain: str) -> bool:
     return first_label in _GENERIC_DOMAINS
 
 
-def _check_invoice_ownership(invoice_customer_id: str, sender_email: str) -> tuple[bool, str]:
+def _check_invoice_ownership(
+    invoice_customer_id: str, sender_email: str
+) -> tuple[bool, str]:
     """
     Returns (is_verified, reason).
 
@@ -65,15 +83,15 @@ def _check_invoice_ownership(invoice_customer_id: str, sender_email: str) -> tup
     Level 2 — Domain match: same non-generic corporate domain     → verified
     Level 3 — No match:                                           → unverified
     """
-    inv_cid   = (invoice_customer_id or "").strip().lower()
-    sender    = (sender_email or "").strip().lower()
+    inv_cid = (invoice_customer_id or "").strip().lower()
+    sender = (sender_email or "").strip().lower()
 
     # Level 1: exact match
     if inv_cid == sender:
         return True, "exact_match"
 
     # Level 2: corporate domain match (skip generic providers)
-    inv_domain    = _extract_domain(inv_cid)
+    inv_domain = _extract_domain(inv_cid)
     sender_domain = _extract_domain(sender)
 
     if (
@@ -87,7 +105,7 @@ def _check_invoice_ownership(invoice_customer_id: str, sender_email: str) -> tup
     return False, f"no_match(invoice_owner={inv_cid}, sender={sender})"
 
 
-def _derive_customer_id_from_sender(sender_email: str) -> Optional[str]:
+def _derive_customer_id_from_sender(sender_email: str) -> str | None:
     """
     Use the full sender email address as the customer identifier.
     This is the most accurate and unambiguous customer ID — avoids confusion
@@ -112,18 +130,19 @@ async def node_identify_invoice(
         return {**state, "matched_invoice_id": None, "routing_confidence": 0.0}
 
     from src.data.repositories.repositories import InvoiceRepository, PaymentRepository
+
     inv_repo = InvoiceRepository(db_session)
     pay_repo = PaymentRepository(db_session)
 
     # ── Invoice matching ──────────────────────────────────────────────────────
     matched_invoice = None
-    confidence      = 0.0
+    confidence = 0.0
 
     for candidate in state["candidate_invoice_numbers"]:
         invoice = await inv_repo.get_by_invoice_number(candidate)
         if invoice:
             matched_invoice = invoice
-            confidence      = 0.95
+            confidence = 0.95
             break
 
     if not matched_invoice and state["candidate_invoice_numbers"]:
@@ -131,7 +150,7 @@ async def node_identify_invoice(
             results = await inv_repo.search_by_number_fuzzy(candidate)
             if results:
                 matched_invoice = results[0]
-                confidence      = 0.65
+                confidence = 0.65
                 break
 
     # ── customer_id resolution — sender-first, always ─────────────────────────
@@ -140,10 +159,9 @@ async def node_identify_invoice(
 
     # Step 2: Groq extraction — used when sender domain is generic or absent
     if not customer_id and state.get("groq_extracted"):
-        groq_cid = (
-            state["groq_extracted"].get("customer_id")
-            or state["groq_extracted"].get("customer_name")
-        )
+        groq_cid = state["groq_extracted"].get("customer_id") or state[
+            "groq_extracted"
+        ].get("customer_name")
         if groq_cid:
             customer_id = str(groq_cid).strip()
 
@@ -164,7 +182,9 @@ async def node_identify_invoice(
     ownership_unverified = False
     if matched_invoice:
         # Fetch payment records to get customer_id
-        _payments = await pay_repo.get_all_by_invoice_number(matched_invoice.invoice_number)
+        _payments = await pay_repo.get_all_by_invoice_number(
+            matched_invoice.invoice_number
+        )
         _invoice_customer_id = _payments[0].customer_id if _payments else None
 
         if _invoice_customer_id:
@@ -181,7 +201,7 @@ async def node_identify_invoice(
                 )
                 # Clear the matched invoice so the LLM never receives its details
                 matched_invoice = None
-                confidence      = 0.0
+                confidence = 0.0
             else:
                 logger.info(
                     f"[email_id={state['email_id']}] Ownership verified ({reason}) "
@@ -196,9 +216,11 @@ async def node_identify_invoice(
             )
 
     # ── Payment records — for supporting docs only, NOT for customer_id ───────
-    matched_payment_ids: List[int] = []
+    matched_payment_ids: list[int] = []
     if matched_invoice:
-        payments = await pay_repo.get_all_by_invoice_number(matched_invoice.invoice_number)
+        payments = await pay_repo.get_all_by_invoice_number(
+            matched_invoice.invoice_number
+        )
         matched_payment_ids = [p.payment_detail_id for p in payments]
         logger.info(
             f"[email_id={state['email_id']}] Matched invoice={matched_invoice.invoice_number}, "
@@ -212,20 +234,24 @@ async def node_identify_invoice(
 
     langfuse_context.update_current_observation(
         output={
-            "matched_invoice_number":  matched_invoice.invoice_number if matched_invoice else None,
-            "confidence":              confidence,
-            "payment_count":           len(matched_payment_ids),
-            "customer_id":             customer_id,
-            "ownership_unverified":    ownership_unverified,
+            "matched_invoice_number": matched_invoice.invoice_number
+            if matched_invoice
+            else None,
+            "confidence": confidence,
+            "payment_count": len(matched_payment_ids),
+            "customer_id": customer_id,
+            "ownership_unverified": ownership_unverified,
         }
     )
 
     return {
         **state,
-        "matched_invoice_id":      matched_invoice.invoice_id if matched_invoice else None,
-        "matched_invoice_number":  matched_invoice.invoice_number if matched_invoice else None,
-        "matched_payment_ids":     matched_payment_ids,
-        "customer_id":             customer_id,
-        "routing_confidence":      confidence,
-        "_ownership_unverified":   ownership_unverified,
+        "matched_invoice_id": matched_invoice.invoice_id if matched_invoice else None,
+        "matched_invoice_number": matched_invoice.invoice_number
+        if matched_invoice
+        else None,
+        "matched_payment_ids": matched_payment_ids,
+        "customer_id": customer_id,
+        "routing_confidence": confidence,
+        "_ownership_unverified": ownership_unverified,
     }

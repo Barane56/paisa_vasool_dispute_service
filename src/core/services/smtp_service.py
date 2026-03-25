@@ -21,32 +21,34 @@ When a customer replies, their email client sets:
 The IMAP poller reads those headers → matches to outbound_emails → resolves
 the dispute_id without needing a DISP token in the body.
 """
+
 from __future__ import annotations
 
 import logging
 import smtplib
 import ssl
 import uuid
-from datetime import datetime, timezone
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 from src.config.settings import settings
-from src.core.services.imap_service import decode_password
 from src.core.services.gcs_service import download_attachment as _gcs_download
+from src.core.services.imap_service import decode_password
 
 logger = logging.getLogger(__name__)
 
-ATTACHMENT_STORAGE_DIR = Path(getattr(settings, "ATTACHMENT_STORAGE_DIR", "/tmp/dispute_attachments"))
+ATTACHMENT_STORAGE_DIR = Path(
+    getattr(settings, "ATTACHMENT_STORAGE_DIR", "/tmp/dispute_attachments")
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Message-ID generator
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def generate_message_id(from_email: str) -> str:
     """Generate a globally-unique RFC-2822 Message-ID."""
@@ -58,15 +60,16 @@ def generate_message_id(from_email: str) -> str:
 # Build References chain
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def build_references_chain(
-    in_reply_to_message_id: Optional[str],
-    parent_references: Optional[str],
-) -> Optional[str]:
+    in_reply_to_message_id: str | None,
+    parent_references: str | None,
+) -> str | None:
     """
     Build the References header value for a new outgoing email.
     Concatenates the parent References chain with the In-Reply-To header.
     """
-    parts: List[str] = []
+    parts: list[str] = []
     if parent_references:
         parts.extend(parent_references.split())
     if in_reply_to_message_id and in_reply_to_message_id not in parts:
@@ -78,13 +81,14 @@ def build_references_chain(
 # SMTP connection test
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_smtp_connection(
     smtp_host: str,
     smtp_port: int,
     smtp_use_tls: bool,
     username: str,
     password_enc: str,
-) -> Tuple[bool, str]:
+) -> tuple[bool, str]:
     """Synchronously tests SMTP credentials. Returns (ok, message)."""
     try:
         password = decode_password(password_enc)
@@ -110,6 +114,7 @@ def test_smtp_connection(
 # Core send function
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def send_email(
     *,
     smtp_host: str,
@@ -117,15 +122,16 @@ def send_email(
     smtp_use_tls: bool,
     username: str,
     password_enc: str,
-    from_address: str,           # mailbox email address — used bare in From header
+    from_address: str,  # mailbox email address — used bare in From header
     to_address: str,
     subject: str,
     body_html: str,
     body_text: str,
     message_id: str,
-    in_reply_to: Optional[str] = None,
-    references: Optional[str] = None,
-    attachment_paths: Optional[List[Tuple[str, str]]] = None,  # [(rel_path, filename), ...]
+    in_reply_to: str | None = None,
+    references: str | None = None,
+    attachment_paths: list[tuple[str, str]]
+    | None = None,  # [(rel_path, filename), ...]
 ) -> None:
     """
     Send an email via SMTP.
@@ -135,9 +141,9 @@ def send_email(
     password = decode_password(password_enc)
 
     msg = MIMEMultipart("mixed")
-    msg["From"]       = from_address   # bare address — e.g. ar@company.com
-    msg["To"]         = to_address
-    msg["Subject"]    = subject
+    msg["From"] = from_address  # bare address — e.g. ar@company.com
+    msg["To"] = to_address
+    msg["Subject"] = subject
     msg["Message-ID"] = message_id
     if in_reply_to:
         msg["In-Reply-To"] = in_reply_to
@@ -147,11 +153,11 @@ def send_email(
     # Attach body
     alt = MIMEMultipart("alternative")
     alt.attach(MIMEText(body_text, "plain", "utf-8"))
-    alt.attach(MIMEText(body_html,  "html",  "utf-8"))
+    alt.attach(MIMEText(body_html, "html", "utf-8"))
     msg.attach(alt)
 
     # Attach files
-    for rel_path, filename in (attachment_paths or []):
+    for rel_path, filename in attachment_paths or []:
         try:
             if settings.GCS_ENABLED:
                 file_bytes = _gcs_download(rel_path)
@@ -184,4 +190,6 @@ def send_email(
             server.login(username, password)
             server.sendmail(from_address, [to_address], msg.as_bytes())
 
-    logger.info(f"Email sent from={from_address} to={to_address} message_id={message_id}")
+    logger.info(
+        f"Email sent from={from_address} to={to_address} message_id={message_id}"
+    )

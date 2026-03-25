@@ -1,9 +1,10 @@
 import logging
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.data.repositories.repositories import DisputeTypeRepository
+from src.core.exceptions import AlreadyExistsError, DisputeTypeNotFoundError
 from src.data.models.postgres.models import DisputeType
-from src.core.exceptions import DisputeTypeNotFoundError, AlreadyExistsError
+from src.data.repositories.repositories import DisputeTypeRepository
 from src.schemas.schemas import DisputeTypeCreate
 
 logger = logging.getLogger(__name__)

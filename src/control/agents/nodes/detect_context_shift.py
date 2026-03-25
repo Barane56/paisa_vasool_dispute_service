@@ -32,15 +32,15 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from src.observability import observe, langfuse_context
 from src.control.agents.state import EmailProcessingState
 from src.control.prompts.detect_context_shift import (
-    build_detect_context_shift_prompt,
     PROMPT_NAME,
     PROMPT_VERSION,
+    build_detect_context_shift_prompt,
 )
+from src.observability import langfuse_context, observe
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ def _safe_priority(value: Any) -> str:
     return "MEDIUM"
 
 
-def _normalise_issue(raw: Any) -> Optional[Dict]:
+def _normalise_issue(raw: Any) -> dict | None:
     """
     Normalise a single entry from the LLM's new_issues list.
     Returns None if the entry is structurally invalid.
@@ -80,11 +80,13 @@ def _normalise_issue(raw: Any) -> Optional[Dict]:
     if not description:
         return None
     return {
-        "invoice_number":    (raw.get("new_dispute_invoice_number") or "").strip() or None,
-        "type_hint":         (raw.get("new_dispute_type_hint") or "General Clarification").strip(),
-        "description":       description,
-        "priority":          _safe_priority(raw.get("priority")),
-        "context_note":      (raw.get("context_note") or "").strip() or None,
+        "invoice_number": (raw.get("new_dispute_invoice_number") or "").strip() or None,
+        "type_hint": (
+            raw.get("new_dispute_type_hint") or "General Clarification"
+        ).strip(),
+        "description": description,
+        "priority": _safe_priority(raw.get("priority")),
+        "context_note": (raw.get("context_note") or "").strip() or None,
         "relationship_type": _safe_relationship_type(raw.get("relationship_type")),
     }
 
@@ -97,9 +99,9 @@ async def node_detect_context_shift(
     Gate: skip entirely when there is no existing dispute or this is a token match.
     Otherwise ask the LLM whether the email introduces new issues.
     """
-    email_id          = state["email_id"]
-    existing_id       = state.get("existing_dispute_id")
-    token_matched     = state.get("token_matched_dispute_id") is not None
+    email_id = state["email_id"]
+    existing_id = state.get("existing_dispute_id")
+    token_matched = state.get("token_matched_dispute_id") is not None
 
     # ── Gate ─────────────────────────────────────────────────────────────────
     # Skip when:
@@ -107,14 +109,21 @@ async def node_detect_context_shift(
     #   • Token-matched — customer explicitly referenced this dispute
     #   • Intent flag says no fork needed — SOCIAL, IRRELEVANT, etc.
     #   • requires_fork is explicitly False from the classifier
-    intent         = state.get("intent", "UNKNOWN")
-    requires_fork  = state.get("requires_fork", True)
+    intent = state.get("intent", "UNKNOWN")
+    requires_fork = state.get("requires_fork", True)
 
     # Intents that are never forks — no billing content means nothing to split
-    _NON_FORK_INTENTS = frozenset({
-        "SOCIAL", "IRRELEVANT", "ABUSIVE", "RESOLUTION_ACK",
-        "DUPLICATE_CONTACT", "PAYMENT_ADVICE", "ADVANCE_PAYMENT",
-    })
+    _NON_FORK_INTENTS = frozenset(
+        {
+            "SOCIAL",
+            "IRRELEVANT",
+            "ABUSIVE",
+            "RESOLUTION_ACK",
+            "DUPLICATE_CONTACT",
+            "PAYMENT_ADVICE",
+            "ADVANCE_PAYMENT",
+        }
+    )
 
     skip_reason: str | None = None
     if not existing_id:
@@ -127,38 +136,43 @@ async def node_detect_context_shift(
         skip_reason = f"classifier set requires_fork=False for intent={intent}"
 
     if skip_reason:
-        logger.debug(f"[email_id={email_id}] detect_context_shift: skipped — {skip_reason}")
+        logger.debug(
+            f"[email_id={email_id}] detect_context_shift: skipped — {skip_reason}"
+        )
         langfuse_context.update_current_observation(
             output={"skipped": True, "reason": skip_reason}
         )
         return {
             **state,
-            "context_shift_detected":      False,
-            "context_shift_confidence":    0.0,
-            "context_shift_reasoning":     None,
-            "forked_issues":               [],
+            "context_shift_detected": False,
+            "context_shift_confidence": 0.0,
+            "context_shift_reasoning": None,
+            "forked_issues": [],
             "original_dispute_still_active": True,
         }
 
     # ── Gather active dispute metadata for the prompt ─────────────────────────
     existing_invoice_number = None
-    existing_dispute_type   = state.get("dispute_type_name", "Unknown")
-    existing_description    = ""
-    existing_status         = "OPEN"
+    existing_dispute_type = state.get("dispute_type_name", "Unknown")
+    existing_description = ""
+    existing_status = "OPEN"
 
     if db_session:
         try:
             from src.data.repositories.repositories import DisputeRepository
+
             dispute = await DisputeRepository(db_session).get_by_id(existing_id)
             if dispute:
                 existing_invoice_number = (
                     dispute.invoice.invoice_number if dispute.invoice else None
                 )
                 existing_dispute_type = (
-                    dispute.dispute_type.reason_name if dispute.dispute_type else existing_dispute_type
+                    dispute.dispute_type.reason_name
+                    if dispute.dispute_type
+                    else existing_dispute_type
                 )
                 existing_description = dispute.description or ""
-                existing_status      = dispute.status or "OPEN"
+                existing_status = dispute.status or "OPEN"
         except Exception as db_err:
             logger.warning(
                 f"[email_id={email_id}] detect_context_shift: could not load dispute "
@@ -175,17 +189,18 @@ async def node_detect_context_shift(
         )
         return {
             **state,
-            "context_shift_detected":      False,
-            "context_shift_confidence":    0.0,
-            "context_shift_reasoning":     None,
-            "forked_issues":               [],
+            "context_shift_detected": False,
+            "context_shift_confidence": 0.0,
+            "context_shift_reasoning": None,
+            "forked_issues": [],
             "original_dispute_still_active": True,
         }
 
     # Newest invoice number extracted from this email (may differ from existing)
-    new_invoice_number: Optional[str] = (
-        state.get("matched_invoice_number")
-        or (state["candidate_invoice_numbers"][0] if state.get("candidate_invoice_numbers") else None)
+    new_invoice_number: str | None = state.get("matched_invoice_number") or (
+        state["candidate_invoice_numbers"][0]
+        if state.get("candidate_invoice_numbers")
+        else None
     )
 
     # ── Build and send prompt ─────────────────────────────────────────────────
@@ -210,7 +225,7 @@ async def node_detect_context_shift(
     # ── LLM call with full error isolation ───────────────────────────────────
     try:
         raw_response = await llm_client.chat_reasoning(prompt)
-        data: Dict   = json.loads(raw_response)
+        data: dict = json.loads(raw_response)
     except json.JSONDecodeError as json_err:
         logger.error(
             f"[email_id={email_id}] detect_context_shift: LLM returned invalid JSON: "
@@ -219,9 +234,14 @@ async def node_detect_context_shift(
         langfuse_context.update_current_observation(
             output={"error": "json_decode_error", "skipped": True}
         )
-        return {**state, "context_shift_detected": False, "context_shift_confidence": 0.0,
-                "context_shift_reasoning": None, "forked_issues": [],
-                "original_dispute_still_active": True}
+        return {
+            **state,
+            "context_shift_detected": False,
+            "context_shift_confidence": 0.0,
+            "context_shift_reasoning": None,
+            "forked_issues": [],
+            "original_dispute_still_active": True,
+        }
     except Exception as llm_err:
         logger.error(
             f"[email_id={email_id}] detect_context_shift: LLM call failed: {llm_err}. "
@@ -230,17 +250,22 @@ async def node_detect_context_shift(
         langfuse_context.update_current_observation(
             output={"error": str(llm_err), "skipped": True}
         )
-        return {**state, "context_shift_detected": False, "context_shift_confidence": 0.0,
-                "context_shift_reasoning": None, "forked_issues": [],
-                "original_dispute_still_active": True}
+        return {
+            **state,
+            "context_shift_detected": False,
+            "context_shift_confidence": 0.0,
+            "context_shift_reasoning": None,
+            "forked_issues": [],
+            "original_dispute_still_active": True,
+        }
 
     # ── Parse response ────────────────────────────────────────────────────────
-    is_shift   = bool(data.get("is_context_shift", False))
+    is_shift = bool(data.get("is_context_shift", False))
     confidence = float(data.get("confidence", 0.0))
-    reasoning  = (data.get("reasoning") or "").strip() or None
+    reasoning = (data.get("reasoning") or "").strip() or None
     original_still_active = bool(data.get("original_dispute_still_active", True))
 
-    raw_new_issues: List = data.get("new_issues") or []
+    raw_new_issues: list = data.get("new_issues") or []
 
     # ── No shift detected ─────────────────────────────────────────────────────
     if not is_shift:
@@ -253,15 +278,15 @@ async def node_detect_context_shift(
         )
         return {
             **state,
-            "context_shift_detected":      False,
-            "context_shift_confidence":    confidence,
-            "context_shift_reasoning":     reasoning,
-            "forked_issues":               [],
+            "context_shift_detected": False,
+            "context_shift_confidence": confidence,
+            "context_shift_reasoning": reasoning,
+            "forked_issues": [],
             "original_dispute_still_active": True,
         }
 
     # ── Shift detected — validate new_issues ─────────────────────────────────
-    normalised_issues: List[Dict] = []
+    normalised_issues: list[dict] = []
     for idx, raw_issue in enumerate(raw_new_issues):
         issue = _normalise_issue(raw_issue)
         if issue is None:
@@ -279,15 +304,19 @@ async def node_detect_context_shift(
             "new_issues is empty or all malformed — treating as no shift"
         )
         langfuse_context.update_current_observation(
-            output={"is_context_shift": True, "confidence": confidence,
-                    "new_issues_count": 0, "action": "downgraded_to_no_shift"}
+            output={
+                "is_context_shift": True,
+                "confidence": confidence,
+                "new_issues_count": 0,
+                "action": "downgraded_to_no_shift",
+            }
         )
         return {
             **state,
-            "context_shift_detected":      False,
-            "context_shift_confidence":    confidence,
-            "context_shift_reasoning":     reasoning,
-            "forked_issues":               [],
+            "context_shift_detected": False,
+            "context_shift_confidence": confidence,
+            "context_shift_reasoning": reasoning,
+            "forked_issues": [],
             "original_dispute_still_active": True,
         }
 
@@ -304,31 +333,42 @@ async def node_detect_context_shift(
         )
         if db_session:
             try:
-                from src.data.models.postgres.dispute_models import DisputeForkRecommendation
+                from src.data.models.postgres.dispute_models import (
+                    DisputeForkRecommendation,
+                )
+
                 for issue in normalised_issues:
-                    db_session.add(DisputeForkRecommendation(
-                        dispute_id               = existing_id,
-                        email_id                 = email_id,
-                        confidence               = confidence,
-                        reasoning                = reasoning,
-                        suggested_invoice_number = issue.get("invoice_number"),
-                        suggested_type_hint      = issue.get("type_hint"),
-                        suggested_description    = issue.get("description"),
-                        suggested_priority       = issue.get("priority", "MEDIUM"),
-                        status                   = "PENDING",
-                    ))
+                    db_session.add(
+                        DisputeForkRecommendation(
+                            dispute_id=existing_id,
+                            email_id=email_id,
+                            confidence=confidence,
+                            reasoning=reasoning,
+                            suggested_invoice_number=issue.get("invoice_number"),
+                            suggested_type_hint=issue.get("type_hint"),
+                            suggested_description=issue.get("description"),
+                            suggested_priority=issue.get("priority", "MEDIUM"),
+                            status="PENDING",
+                        )
+                    )
                 await db_session.flush()
             except Exception as e:
-                logger.warning(f"[email_id={email_id}] fork rec write failed (non-fatal): {e}")
+                logger.warning(
+                    f"[email_id={email_id}] fork rec write failed (non-fatal): {e}"
+                )
         langfuse_context.update_current_observation(
-            output={"is_context_shift": True, "confidence": confidence, "action": "pending_recommendation"}
+            output={
+                "is_context_shift": True,
+                "confidence": confidence,
+                "action": "pending_recommendation",
+            }
         )
         return {
             **state,
-            "context_shift_detected":        False,
-            "context_shift_confidence":      confidence,
-            "context_shift_reasoning":       reasoning,
-            "forked_issues":                 [],
+            "context_shift_detected": False,
+            "context_shift_confidence": confidence,
+            "context_shift_reasoning": reasoning,
+            "forked_issues": [],
             "original_dispute_still_active": True,
         }
 
@@ -340,38 +380,45 @@ async def node_detect_context_shift(
     )
     if db_session:
         try:
-            from src.data.models.postgres.dispute_models import DisputeForkRecommendation
+            from src.data.models.postgres.dispute_models import (
+                DisputeForkRecommendation,
+            )
+
             for issue in normalised_issues:
-                db_session.add(DisputeForkRecommendation(
-                    dispute_id               = existing_id,
-                    email_id                 = email_id,
-                    confidence               = confidence,
-                    reasoning                = reasoning,
-                    suggested_invoice_number = issue.get("invoice_number"),
-                    suggested_type_hint      = issue.get("type_hint"),
-                    suggested_description    = issue.get("description"),
-                    suggested_priority       = issue.get("priority", "MEDIUM"),
-                    status                   = "ACCEPTED",
-                ))
+                db_session.add(
+                    DisputeForkRecommendation(
+                        dispute_id=existing_id,
+                        email_id=email_id,
+                        confidence=confidence,
+                        reasoning=reasoning,
+                        suggested_invoice_number=issue.get("invoice_number"),
+                        suggested_type_hint=issue.get("type_hint"),
+                        suggested_description=issue.get("description"),
+                        suggested_priority=issue.get("priority", "MEDIUM"),
+                        status="ACCEPTED",
+                    )
+                )
             await db_session.flush()
         except Exception as e:
-            logger.warning(f"[email_id={email_id}] fork rec log failed (non-fatal): {e}")
+            logger.warning(
+                f"[email_id={email_id}] fork rec log failed (non-fatal): {e}"
+            )
 
     langfuse_context.update_current_observation(
         output={
-            "is_context_shift":              True,
-            "confidence":                    confidence,
-            "new_issues_count":              len(normalised_issues),
-            "action":                        "auto_forked",
+            "is_context_shift": True,
+            "confidence": confidence,
+            "new_issues_count": len(normalised_issues),
+            "action": "auto_forked",
             "original_dispute_still_active": original_still_active,
         }
     )
 
     return {
         **state,
-        "context_shift_detected":        True,
-        "context_shift_confidence":      confidence,
-        "context_shift_reasoning":       reasoning,
-        "forked_issues":                 normalised_issues,
+        "context_shift_detected": True,
+        "context_shift_confidence": confidence,
+        "context_shift_reasoning": reasoning,
+        "forked_issues": normalised_issues,
         "original_dispute_still_active": original_still_active,
     }

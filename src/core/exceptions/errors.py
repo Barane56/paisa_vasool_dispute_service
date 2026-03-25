@@ -1,4 +1,4 @@
-from typing import Optional, Any, Dict
+from typing import Any
 
 
 class PaisaVasoolException(Exception):
@@ -8,7 +8,7 @@ class PaisaVasoolException(Exception):
         self,
         message: str,
         status_code: int = 500,
-        detail: Optional[Any] = None,
+        detail: Any | None = None,
     ):
         self.message = message
         self.status_code = status_code
@@ -43,7 +43,7 @@ class ForbiddenError(PaisaVasoolException):
 
 
 class ValidationError(PaisaVasoolException):
-    def __init__(self, message: str, errors: Optional[Dict] = None):
+    def __init__(self, message: str, errors: dict | None = None):
         super().__init__(message=message, status_code=422, detail=errors)
 
 
@@ -75,7 +75,9 @@ class LLMError(PaisaVasoolException):
 
 class InvoiceExtractionError(PaisaVasoolException):
     def __init__(self, message: str):
-        super().__init__(message=f"Invoice extraction failed: {message}", status_code=422)
+        super().__init__(
+            message=f"Invoice extraction failed: {message}", status_code=422
+        )
 
 
 class InvoiceNotFoundError(NotFoundError):
@@ -110,7 +112,9 @@ class AnalysisNotFoundError(NotFoundError):
 
 class SummaryNotFoundError(NotFoundError):
     def __init__(self, dispute_id: Any):
-        super().__init__(resource="Memory Summary", identifier=f"dispute_id={dispute_id}")
+        super().__init__(
+            resource="Memory Summary", identifier=f"dispute_id={dispute_id}"
+        )
 
 
 class QuestionNotFoundError(NotFoundError):

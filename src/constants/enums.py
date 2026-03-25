@@ -66,24 +66,27 @@ class TaskNames:
     SUMMARIZE_EPISODES = "src.control.tasks.summarize_episodes_task"
     MATCH_INVOICE = "src.control.tasks.match_invoice_task"
 
+
 # Add this to your enums.py file (src/constants/enums.py)
 
 from enum import Enum
+
 
 class SeverityLevel(str, Enum):
     """
     Severity levels for dispute types.
     Indicates the urgency and impact of a dispute category.
     """
+
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
 
     def __str__(self):
         return self.value
-    
+
     @classmethod
-    def from_string(cls, value: str) -> 'SeverityLevel':
+    def from_string(cls, value: str) -> "SeverityLevel":
         """
         Convert string to SeverityLevel enum.
         Case-insensitive conversion.

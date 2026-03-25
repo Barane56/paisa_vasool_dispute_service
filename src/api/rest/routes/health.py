@@ -1,6 +1,7 @@
 from fastapi import APIRouter
-from src.schemas.schemas import HealthResponse
+
 from src.config.settings import settings
+from src.schemas.schemas import HealthResponse
 
 router = APIRouter(tags=["Health"])
 
@@ -12,6 +13,7 @@ async def health():
     redis_ok = "ok"
     try:
         from src.data.clients.postgres import engine
+
         async with engine.connect() as conn:
             await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
     except Exception:
@@ -19,6 +21,7 @@ async def health():
 
     try:
         from src.data.clients.redis_client import get_redis
+
         r = await get_redis()
         await r.ping()
     except Exception:

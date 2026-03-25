@@ -2,18 +2,19 @@
 src/control/prompts/extract_invoice.py
 Updated to support multi-file attachment context.
 """
+
 from pathlib import Path
-from typing import List, Dict, Optional
+
 from poml import poml as render_poml
 
-PROMPT_NAME    = "extract_invoice_data"
+PROMPT_NAME = "extract_invoice_data"
 PROMPT_VERSION = "1.1"
 _TEMPLATE = str(Path(__file__).parent / "templates" / "extract_invoice.poml")
 
 
 def build_extract_invoice_prompt(
     raw_text: str,
-    attachment_metadata: Optional[List[Dict]] = None,
+    attachment_metadata: list[dict] | None = None,
 ) -> str:
     """
     Build the invoice extraction prompt.
@@ -25,8 +26,8 @@ def build_extract_invoice_prompt(
     if attachment_metadata:
         parts = []
         for meta in attachment_metadata:
-            fname     = meta.get("file_name", "attachment")
-            ftype     = meta.get("file_type", "unknown")
+            fname = meta.get("file_name", "attachment")
+            ftype = meta.get("file_type", "unknown")
             extracted = meta.get("extracted_text", "")
             if extracted:
                 parts.append(f"[{fname} ({ftype.upper()})]\n{extracted[:2000]}")

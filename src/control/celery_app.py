@@ -1,4 +1,5 @@
 from celery import Celery
+
 from src.config.settings import settings
 
 celery_app = Celery(
@@ -18,13 +19,13 @@ celery_app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     task_routes={
-        "src.control.tasks.process_email_task":      {"queue": "email_processing"},
-        "src.control.tasks.process_live_email_task":    {"queue": "email_processing"},
+        "src.control.tasks.process_email_task": {"queue": "email_processing"},
+        "src.control.tasks.process_live_email_task": {"queue": "email_processing"},
         "src.control.tasks.link_reply_to_dispute_task": {"queue": "email_processing"},
-        "src.control.tasks.fetch_mailbox_emails_task":  {"queue": "mailbox_polling"},
+        "src.control.tasks.fetch_mailbox_emails_task": {"queue": "mailbox_polling"},
         "src.control.tasks.poll_all_mailboxes_task": {"queue": "mailbox_polling"},
         "src.control.tasks.summarize_episodes_task": {"queue": "memory"},
-        "src.control.tasks.match_invoice_task":      {"queue": "matching"},
+        "src.control.tasks.match_invoice_task": {"queue": "matching"},
     },
     task_default_queue="default",
     beat_schedule={

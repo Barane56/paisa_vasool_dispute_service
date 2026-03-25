@@ -6,14 +6,14 @@ Both services share the same SECRET_KEY so no HTTP call to auth service is neede
 """
 
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.exceptions import InvalidTokenError, TokenExpiredError
 from src.data.clients.postgres import get_db
 from src.data.repositories.repositories import UserRepository
+from src.schemas.common_schemas import CurrentUser
 from src.utils.jwt import decode_access_token
-from src.schemas.schemas import CurrentUser
-from src.core.exceptions import UnauthorizedError, TokenExpiredError, InvalidTokenError
 
 bearer_scheme = HTTPBearer()
 
@@ -28,14 +28,14 @@ async def get_current_user(
     # token = credentials.credentials
     # print(request.headers)
     token = None
-    # for api based connection we need to read the cookie from access token 
+    # for api based connection we need to read the cookie from access token
     # when using swagger please uncomment the HTTPAuthorizationCredentials line
     # if (credentials := await bearer_scheme(request)):
     #     token = credentials.credentials
     # else:
     token = request.cookies.get("access_token")
     # if token is None:
-    #     # try to get from authorization headers 
+    #     # try to get from authorization headers
     #     token = request.headers.get('access_token').split(' ')[1]
 
     # print(token)
@@ -59,4 +59,6 @@ async def get_current_user(
     if user.user_roles and user.user_roles.role:
         role_name = user.user_roles.role.role_name
 
-    return CurrentUser(user_id=user.user_id, name=user.name, email=user.email, role=role_name)
+    return CurrentUser(
+        user_id=user.user_id, name=user.name, email=user.email, role=role_name
+    )

@@ -4,24 +4,34 @@ src/api/rest/routes/disputes.py
 Thin route layer — all business/query logic lives in DisputeService.
 Routes only handle HTTP concerns: extract params, call service, return response.
 """
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
-from fastapi.responses import RedirectResponse, FileResponse
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, List
 
-from src.data.clients.postgres import get_db
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi.responses import RedirectResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.api.rest.dependencies import get_current_user
+from src.core.services.dispute_document_service import DisputeDocumentService
 from src.core.services.dispute_service import DisputeService
 from src.core.services.draft_email_service import generate_draft_email
-from src.core.services.dispute_document_service import DisputeDocumentService
-from src.api.rest.dependencies import get_current_user
+from src.data.clients.postgres import get_db
 from src.schemas.schemas import (
-    CurrentUser, DisputeListResponse, DisputeDetailResponse, DisputeResponse,
-    DisputeStatusUpdate, DisputeAssignRequest, DisputeTimelineResponse,
-    AIAnalysisResponse, MemorySummaryResponse, TimelineEpisodeResponse,
-    OpenQuestionResponse, QuestionStatusUpdate, SuccessResponse, TaskResponse,
+    AIAnalysisResponse,
+    CurrentUser,
+    DisputeAssignRequest,
+    DisputeDetailResponse,
+    DisputeDocumentListResponse,
+    DisputeDocumentResponse,
+    DisputeListResponse,
+    DisputeStatusUpdate,
+    DisputeTimelineResponse,
     DraftEmailResponse,
     FADisputeCreate,
-    DisputeDocumentResponse, DisputeDocumentListResponse,
+    MemorySummaryResponse,
+    OpenQuestionResponse,
+    QuestionStatusUpdate,
+    SuccessResponse,
+    TaskResponse,
+    TimelineEpisodeResponse,
 )
 
 router = APIRouter(prefix="/disputes", tags=["Disputes"])
@@ -29,11 +39,15 @@ router = APIRouter(prefix="/disputes", tags=["Disputes"])
 
 @router.get("", response_model=DisputeListResponse)
 async def list_disputes(
-    status: Optional[str] = Query(None, description="OPEN/UNDER_REVIEW/RESOLVED/CLOSED/UNVERIFIED"),
-    priority: Optional[str] = Query(None, description="LOW/MEDIUM/HIGH"),
-    customer_id: Optional[str] = Query(None),
-    assigned_to: Optional[int] = Query(None, description="Filter by assigned user_id"),
-    search: Optional[str] = Query(None, description="Search by customer_id, description, dispute_id, or type"),
+    status: str | None = Query(
+        None, description="OPEN/UNDER_REVIEW/RESOLVED/CLOSED/UNVERIFIED"
+    ),
+    priority: str | None = Query(None, description="LOW/MEDIUM/HIGH"),
+    customer_id: str | None = Query(None),
+    assigned_to: int | None = Query(None, description="Filter by assigned user_id"),
+    search: str | None = Query(
+        None, description="Search by customer_id, description, dispute_id, or type"
+    ),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -51,7 +65,9 @@ async def list_disputes(
 
     # Admin: no assignment filter unless explicitly requested
     # FA:    restrict to their own assignments unless overridden
-    effective_assigned_to = assigned_to if is_admin else (assigned_to or current_user.user_id)
+    effective_assigned_to = (
+        assigned_to if is_admin else (assigned_to or current_user.user_id)
+    )
 
     enriched, total = await service.get_enriched_list(
         status=status,
@@ -65,7 +81,7 @@ async def list_disputes(
     return DisputeListResponse(total=total, items=enriched)
 
 
-@router.get("/bulk-detail", response_model=List[DisputeDetailResponse])
+@router.get("/bulk-detail", response_model=list[DisputeDetailResponse])
 async def bulk_get_dispute_detail(
     ids: str = Query(..., description="Comma-separated dispute_ids e.g. ?ids=1,2,3"),
     db: AsyncSession = Depends(get_db),
@@ -86,7 +102,9 @@ async def get_my_disputes(
     """Get all disputes assigned to the logged-in associate."""
     service = DisputeService(db)
     enriched, total = await service.get_enriched_list(
-        assigned_to=current_user.user_id, limit=limit, offset=offset,
+        assigned_to=current_user.user_id,
+        limit=limit,
+        offset=offset,
     )
     return DisputeListResponse(total=total, items=enriched)
 
@@ -110,10 +128,16 @@ async def update_dispute_status(
 ):
     """Update the status of a dispute."""
     await DisputeService(db).update_status(dispute_id, data, current_user.user_id)
-    return SuccessResponse(message=f"Dispute {dispute_id} status updated to {data.status}")
+    return SuccessResponse(
+        message=f"Dispute {dispute_id} status updated to {data.status}"
+    )
 
 
-@router.post("/{dispute_id}/assign", response_model=SuccessResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{dispute_id}/assign",
+    response_model=SuccessResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def assign_dispute(
     dispute_id: int,
     data: DisputeAssignRequest,
@@ -121,7 +145,9 @@ async def assign_dispute(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Assign or reassign a dispute to a finance associate."""
-    assignment, user = await DisputeService(db).assign_dispute(dispute_id, data, current_user.user_id)
+    assignment, user = await DisputeService(db).assign_dispute(
+        dispute_id, data, current_user.user_id
+    )
     return SuccessResponse(
         message=f"Dispute {dispute_id} assigned to {user.name}",
         data={"assignment_id": assignment.assignment_id, "assigned_to": user.email},
@@ -159,7 +185,7 @@ async def reanalyze_dispute(
     return TaskResponse(task_id=task_id, status="QUEUED", message="Re-analysis queued")
 
 
-@router.get("/{dispute_id}/episodes", response_model=List[TimelineEpisodeResponse])
+@router.get("/{dispute_id}/episodes", response_model=list[TimelineEpisodeResponse])
 async def get_dispute_episodes(
     dispute_id: int,
     db: AsyncSession = Depends(get_db),
@@ -169,8 +195,10 @@ async def get_dispute_episodes(
     episodes = await DisputeService(db).get_episodes(dispute_id)
     return [
         TimelineEpisodeResponse(
-            episode_id=ep.episode_id, actor=ep.actor,
-            episode_type=ep.episode_type, content_text=ep.content_text,
+            episode_id=ep.episode_id,
+            actor=ep.actor,
+            episode_type=ep.episode_type,
+            content_text=ep.content_text,
             created_at=ep.created_at,
         )
         for ep in episodes
@@ -187,7 +215,7 @@ async def get_dispute_summary(
     return await DisputeService(db).get_summary(dispute_id)
 
 
-@router.get("/{dispute_id}/open-questions", response_model=List[OpenQuestionResponse])
+@router.get("/{dispute_id}/open-questions", response_model=list[OpenQuestionResponse])
 async def get_open_questions(
     dispute_id: int,
     db: AsyncSession = Depends(get_db),
@@ -197,14 +225,19 @@ async def get_open_questions(
     questions = await DisputeService(db).get_open_questions(dispute_id)
     return [
         OpenQuestionResponse(
-            question_id=q.question_id, question_text=q.question_text,
-            status=q.status, asked_at=q.created_at, answered_at=q.answered_at,
+            question_id=q.question_id,
+            question_text=q.question_text,
+            status=q.status,
+            asked_at=q.created_at,
+            answered_at=q.answered_at,
         )
         for q in questions
     ]
 
 
-@router.patch("/{dispute_id}/open-questions/{question_id}", response_model=SuccessResponse)
+@router.patch(
+    "/{dispute_id}/open-questions/{question_id}", response_model=SuccessResponse
+)
 async def update_question_status(
     dispute_id: int,
     question_id: int,
@@ -213,7 +246,9 @@ async def update_question_status(
     current_user: CurrentUser = Depends(get_current_user),
 ):
     """Manually mark a pending question as ANSWERED or EXPIRED."""
-    await DisputeService(db).update_question_status(dispute_id, question_id, data, current_user.user_id)
+    await DisputeService(db).update_question_status(
+        dispute_id, question_id, data, current_user.user_id
+    )
     return SuccessResponse(message=f"Question {question_id} marked as {data.status}")
 
 
@@ -245,10 +280,12 @@ async def draft_email_reply(
     except Exception:
         pass
 
-    dispute_type_name = dispute.dispute_type.reason_name if dispute.dispute_type else None
+    dispute_type_name = (
+        dispute.dispute_type.reason_name if dispute.dispute_type else None
+    )
 
     # Pass the FA's real name so the draft sounds personal
-    fa_name = current_user.name if hasattr(current_user, 'name') else None
+    fa_name = current_user.name if hasattr(current_user, "name") else None
 
     draft_body = await generate_draft_email(
         dispute_id=dispute_id,
@@ -284,6 +321,7 @@ async def mark_dispute_read(
     Called by the frontend when the dispute modal is opened.
     """
     from src.data.repositories.dispute_repository import DisputeNewMessageRepository
+
     await DisputeNewMessageRepository(db).clear_new_message(dispute_id)
     await db.commit()
     return SuccessResponse(message=f"Dispute {dispute_id} marked as read")
@@ -293,7 +331,10 @@ async def mark_dispute_read(
 # FA Manual Dispute Creation
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@router.post("/create", response_model=DisputeDetailResponse, status_code=status.HTTP_201_CREATED)
+
+@router.post(
+    "/create", response_model=DisputeDetailResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_dispute_manually(
     data: FADisputeCreate,
     db: AsyncSession = Depends(get_db),
@@ -328,18 +369,23 @@ async def create_dispute_manually(
 # Dispute Supporting Documents  (FA-uploaded files)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @router.post(
     "/{dispute_id}/documents",
     response_model=DisputeDocumentResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_dispute_document(
-    dispute_id:   int,
-    file:         UploadFile  = File(..., description="Any file — PDF, image, spreadsheet, etc."),
-    display_name: str | None  = Form(None, description="Human-readable label for this document"),
-    notes:        str | None  = Form(None, description="Why this document is relevant"),
-    db:           AsyncSession = Depends(get_db),
-    current_user: CurrentUser  = Depends(get_current_user),
+    dispute_id: int,
+    file: UploadFile = File(
+        ..., description="Any file — PDF, image, spreadsheet, etc."
+    ),
+    display_name: str | None = Form(
+        None, description="Human-readable label for this document"
+    ),
+    notes: str | None = Form(None, description="Why this document is relevant"),
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Upload a supporting document to a dispute.
@@ -375,9 +421,9 @@ async def upload_dispute_document(
 
 @router.get("/{dispute_id}/documents", response_model=DisputeDocumentListResponse)
 async def list_dispute_documents(
-    dispute_id:   int,
-    db:           AsyncSession = Depends(get_db),
-    current_user: CurrentUser  = Depends(get_current_user),
+    dispute_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """List all FA-uploaded supporting documents for a dispute."""
     service = DisputeService(db)
@@ -401,16 +447,20 @@ async def list_dispute_documents(
         )
         for d in docs
     ]
-    return DisputeDocumentListResponse(dispute_id=dispute_id, total=len(items), items=items)
+    return DisputeDocumentListResponse(
+        dispute_id=dispute_id, total=len(items), items=items
+    )
 
 
 @router.get("/{dispute_id}/documents/{document_id}/download")
 async def download_dispute_document(
-    dispute_id:   int,
-    document_id:  int,
-    mode:         str         = Query("save", description="'view' to open inline, 'save' to force download"),
-    db:           AsyncSession = Depends(get_db),
-    current_user: CurrentUser  = Depends(get_current_user),
+    dispute_id: int,
+    document_id: int,
+    mode: str = Query(
+        "save", description="'view' to open inline, 'save' to force download"
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Serve a supporting document.
@@ -419,15 +469,19 @@ async def download_dispute_document(
     - GCS: try signed URL redirect first, fall back to byte streaming
     - Local: always stream bytes directly
     """
+    import io
+    import mimetypes
+
     from fastapi import HTTPException
     from fastapi.responses import StreamingResponse
-    import io, mimetypes
 
     doc_service = DisputeDocumentService(db)
     doc = await doc_service.get_document(document_id)
 
     if doc.dispute_id != dispute_id:
-        raise HTTPException(status_code=404, detail="Document not found for this dispute")
+        raise HTTPException(
+            status_code=404, detail="Document not found for this dispute"
+        )
 
     disposition = "inline" if mode == "view" else "attachment"
 
@@ -441,9 +495,11 @@ async def download_dispute_document(
     # Try signed URL for GCS paths (signed URLs always force download in browser)
     # For view mode we skip redirect and always stream so we control Content-Disposition
     from src.core.services.dispute_document_service import GCS_PREFIX
+
     if doc.file_path.startswith(GCS_PREFIX) and mode == "save":
         try:
             from src.core.services.gcs_service import get_signed_url
+
             gcs_path = doc.file_path.removeprefix(GCS_PREFIX)
             url = get_signed_url(gcs_path, expiry_minutes=30)
             return RedirectResponse(url=url, status_code=302)
@@ -467,10 +523,10 @@ async def download_dispute_document(
 
 @router.delete("/{dispute_id}/documents/{document_id}", response_model=SuccessResponse)
 async def delete_dispute_document(
-    dispute_id:   int,
-    document_id:  int,
-    db:           AsyncSession = Depends(get_db),
-    current_user: CurrentUser  = Depends(get_current_user),
+    dispute_id: int,
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Delete a supporting document. Removes from GCS/local and DB."""
     doc_service = DisputeDocumentService(db)
@@ -478,7 +534,10 @@ async def delete_dispute_document(
 
     if doc.dispute_id != dispute_id:
         from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Document not found for this dispute")
+
+        raise HTTPException(
+            status_code=404, detail="Document not found for this dispute"
+        )
 
     await doc_service.delete_document(document_id)
     return SuccessResponse(message=f"Document {document_id} deleted")
@@ -488,11 +547,12 @@ async def delete_dispute_document(
 # AR Document Graph — per-dispute linked documents
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @router.get("/{dispute_id}/ar-documents")
 async def get_dispute_ar_documents(
-    dispute_id:   int,
-    db:           AsyncSession = Depends(get_db),
-    current_user: CurrentUser  = Depends(get_current_user),
+    dispute_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Return all AR documents linked to this dispute (PO, GRN, Invoice, Payment, etc.)
@@ -500,23 +560,25 @@ async def get_dispute_ar_documents(
     Only shows documents relevant to this specific dispute — not all customer docs.
     """
     from src.core.services.ar_document_service import ARDocumentService
+
     ar_svc = ARDocumentService(db)
     return await ar_svc.get_ar_documents_for_dispute(dispute_id)
 
 
 from pydantic import BaseModel as _BM2
 
+
 class AnchorUpdateRequest(_BM2):
-    doc_id:         int
-    customer_email: Optional[str] = None   # scope override; defaults to dispute.customer_id
+    doc_id: int
+    customer_email: str | None = None  # scope override; defaults to dispute.customer_id
 
 
 @router.put("/{dispute_id}/ar-documents/anchor")
 async def update_dispute_ar_anchor(
-    dispute_id:   int,
-    body:         AnchorUpdateRequest,
-    db:           AsyncSession = Depends(get_db),
-    current_user: CurrentUser  = Depends(get_current_user),
+    dispute_id: int,
+    body: AnchorUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Replace the anchor AR document for a dispute.
@@ -526,7 +588,11 @@ async def update_dispute_ar_anchor(
     Returns the updated linked document list.
     """
     from fastapi import HTTPException
-    from src.core.services.ar_document_service import ARDocumentService, resolve_customer_scope
+
+    from src.core.services.ar_document_service import (
+        ARDocumentService,
+        resolve_customer_scope,
+    )
     from src.data.repositories.repositories import DisputeRepository
 
     # Resolve customer scope: prefer explicit override, fall back to dispute's customer_id
@@ -542,10 +608,10 @@ async def update_dispute_ar_anchor(
     try:
         ar_svc = ARDocumentService(db)
         result = await ar_svc.replace_anchor_document(
-            dispute_id     = dispute_id,
-            new_doc_id     = body.doc_id,
-            user_id        = current_user.user_id,
-            customer_scope = scope,
+            dispute_id=dispute_id,
+            new_doc_id=body.doc_id,
+            user_id=current_user.user_id,
+            customer_scope=scope,
         )
         return result
     except ValueError as e:
@@ -556,37 +622,39 @@ async def update_dispute_ar_anchor(
 # Fork Recommendations  (AI-suggested case splits — FA decides)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from pydantic import BaseModel as _BaseModel   # local alias avoids conflict with schemas
+from pydantic import BaseModel as _BaseModel  # local alias avoids conflict with schemas
+
 
 class ForkRecommendationAction(_BaseModel):
-    action:           str             # "ACCEPT" | "DISMISS"
-    dispute_type_id:  Optional[int]   = None
-    custom_type_name: Optional[str]   = None
-    custom_type_desc: Optional[str]   = None
-    description:      Optional[str]   = None
-    priority:         str             = "MEDIUM"
-    customer_email:   Optional[str]   = None
-    ar_document_id:   Optional[int]   = None
+    action: str  # "ACCEPT" | "DISMISS"
+    dispute_type_id: int | None = None
+    custom_type_name: str | None = None
+    custom_type_desc: str | None = None
+    description: str | None = None
+    priority: str = "MEDIUM"
+    customer_email: str | None = None
+    ar_document_id: int | None = None
 
 
 @router.get("/{dispute_id}/fork-recommendations")
 async def get_fork_recommendations(
-    dispute_id:   int,
-    db:           AsyncSession = Depends(get_db),
-    current_user: CurrentUser  = Depends(get_current_user),
+    dispute_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """Return all PENDING fork recommendations for this dispute."""
     from src.core.services.dispute_service import ForkRecommendationService
+
     return await ForkRecommendationService(db).list_pending(dispute_id)
 
 
 @router.post("/{dispute_id}/fork-recommendations/{recommendation_id}/action")
 async def action_fork_recommendation(
-    dispute_id:        int,
+    dispute_id: int,
     recommendation_id: int,
-    body:              ForkRecommendationAction,
-    db:                AsyncSession = Depends(get_db),
-    current_user:      CurrentUser  = Depends(get_current_user),
+    body: ForkRecommendationAction,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     ACCEPT or DISMISS a fork recommendation.
@@ -594,28 +662,31 @@ async def action_fork_recommendation(
     DISMISS → hides the recommendation permanently.
     """
     from fastapi import HTTPException
-    from src.core.services.dispute_service import ForkRecommendationService
+
     from src.core.exceptions import DisputeNotFoundError
+    from src.core.services.dispute_service import ForkRecommendationService
 
     svc = ForkRecommendationService(db)
     action = (body.action or "").upper()
 
     try:
         if action == "DISMISS":
-            return await svc.dismiss(dispute_id, recommendation_id, current_user.user_id)
+            return await svc.dismiss(
+                dispute_id, recommendation_id, current_user.user_id
+            )
 
         if action == "ACCEPT":
             return await svc.accept(
-                dispute_id        = dispute_id,
-                recommendation_id = recommendation_id,
-                user_id           = current_user.user_id,
-                dispute_type_id   = body.dispute_type_id,
-                custom_type_name  = body.custom_type_name,
-                custom_type_desc  = body.custom_type_desc,
-                description       = body.description or "",
-                priority          = body.priority,
-                customer_email    = body.customer_email,
-                ar_document_id    = body.ar_document_id,
+                dispute_id=dispute_id,
+                recommendation_id=recommendation_id,
+                user_id=current_user.user_id,
+                dispute_type_id=body.dispute_type_id,
+                custom_type_name=body.custom_type_name,
+                custom_type_desc=body.custom_type_desc,
+                description=body.description or "",
+                priority=body.priority,
+                customer_email=body.customer_email,
+                ar_document_id=body.ar_document_id,
             )
 
         raise HTTPException(status_code=400, detail="action must be ACCEPT or DISMISS")
