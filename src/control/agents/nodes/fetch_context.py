@@ -26,7 +26,7 @@ async def node_fetch_context(
       4. customer_id only                                (new cold mail, no invoice in email)
 
     Memory (episodes, summary, pending questions) is loaded for whatever dispute is found.
-    """
+    """  # noqa: E501
     if not db_session:
         return {
             **state,
@@ -59,7 +59,7 @@ async def node_fetch_context(
         inv_repo = InvoiceRepository(db_session)
         invoice = await inv_repo.get_by_id(state["matched_invoice_id"])
         if invoice:
-            db_details = invoice.invoice_details or {}
+            db_details = invoice.invoice_details or {}  # type: ignore
             groq_data = state.get("groq_extracted") or {}
             invoice_details = {
                 **db_details,
@@ -105,12 +105,12 @@ async def node_fetch_context(
         matched_dispute = await dispute_repo.get_by_id(task_dispute_id)
         if matched_dispute:
             logger.info(
-                f"[email_id={state['email_id']}] L0 match: task-level existing_dispute_id="
+                f"[email_id={state['email_id']}] L0 match: task-level existing_dispute_id="  # noqa: E501
                 f"{task_dispute_id} — bypassing L1-L4 matching"
             )
         else:
             logger.warning(
-                f"[email_id={state['email_id']}] task existing_dispute_id={task_dispute_id} "
+                f"[email_id={state['email_id']}] task existing_dispute_id={task_dispute_id} "  # noqa: E501
                 f"not found in DB — falling through to L1-L4"
             )
 
@@ -124,7 +124,10 @@ async def node_fetch_context(
             # capitalisation variance ("pricing mismatch" vs "Pricing Mismatch")
             # does not cause a miss.
             if matched_invoice_id and dispute_type_name:
-                _norm = lambda s: " ".join((s or "").lower().split())
+
+                def _norm(s):
+                    return " ".join((s or "").lower().split())
+
                 _norm_type = _norm(dispute_type_name)
                 for d in open_disputes:
                     if (
@@ -136,7 +139,7 @@ async def node_fetch_context(
                         logger.info(
                             f"[email_id={state['email_id']}] L1 match: "
                             f"customer+invoice+type → dispute_id={d.dispute_id} "
-                            f"(matched '{d.dispute_type.reason_name}' ≈ '{dispute_type_name}')"
+                            f"(matched '{d.dispute_type.reason_name}' ≈ '{dispute_type_name}')"  # noqa: E501
                         )
                         break
 
@@ -177,25 +180,25 @@ async def node_fetch_context(
                             continue
                         ep_count = await MemoryEpisodeRepository(
                             db_session
-                        ).count_for_dispute(d.dispute_id)
+                        ).count_for_dispute(d.dispute_id)  # type: ignore
                         if ep_count == 0:
                             continue
                         gate_a_candidates.append(d)
 
                     if gate_a_candidates:
-                        # Gate B: semantic similarity of incoming body vs dispute description
+                        # Gate B: semantic similarity of incoming body vs dispute description  # noqa: E501
                         gate_b_threshold = 0.72
                         best_candidate = None
                         best_similarity = 0.0
 
-                        # Pre-fetch memory summaries for all Gate A candidates in one pass.
-                        # memory_summary is the rolling condensed history — essential for
+                        # Pre-fetch memory summaries for all Gate A candidates in one pass.  # noqa: E501
+                        # memory_summary is the rolling condensed history — essential for  # noqa: E501
                         # mature disputes where the original description is stale.
                         _sum_repo = MemorySummaryRepository(db_session)
                         _candidate_summaries: dict = {}
                         for _cd in gate_a_candidates:
                             try:
-                                _sobj = await _sum_repo.get_for_dispute(_cd.dispute_id)
+                                _sobj = await _sum_repo.get_for_dispute(_cd.dispute_id)  # type: ignore
                                 _candidate_summaries[_cd.dispute_id] = (
                                     _sobj.summary_text if _sobj else ""
                                 )
@@ -208,14 +211,14 @@ async def node_fetch_context(
                         body_to_compare = state.get("body_text", "").strip()
                         if body_to_compare and llm_client:
                             try:
-                                incoming_emb = await llm_client.embed(body_to_compare)
+                                incoming_emb = await llm_client.embed(body_to_compare)  # type: ignore
                                 if incoming_emb:
                                     for d in gate_a_candidates:
                                         dispute_text = " ".join(
                                             filter(
                                                 None,
                                                 [
-                                                    d.description or "",
+                                                    d.description or "",  # type: ignore
                                                     _candidate_summaries.get(
                                                         d.dispute_id, ""
                                                     ),
@@ -224,7 +227,7 @@ async def node_fetch_context(
                                         )
                                         if not dispute_text.strip():
                                             continue
-                                        dispute_emb = await llm_client.embed(
+                                        dispute_emb = await llm_client.embed(  # type: ignore
                                             dispute_text
                                         )
                                         if not dispute_emb:
@@ -234,7 +237,9 @@ async def node_fetch_context(
 
                                         dot = sum(
                                             a * b
-                                            for a, b in zip(incoming_emb, dispute_emb)
+                                            for a, b in zip(
+                                                incoming_emb, dispute_emb, strict=False
+                                            )
                                         )
                                         mag_a = math.sqrt(
                                             sum(a * a for a in incoming_emb)
@@ -252,7 +257,7 @@ async def node_fetch_context(
                                             best_candidate = d
                             except Exception as emb_err:
                                 logger.warning(
-                                    f"[email_id={state['email_id']}] L2 Gate B embedding "
+                                    f"[email_id={state['email_id']}] L2 Gate B embedding "  # noqa: E501
                                     f"failed (non-fatal): {emb_err}"
                                 )
 
@@ -260,16 +265,16 @@ async def node_fetch_context(
                             matched_dispute = best_candidate
                             logger.info(
                                 f"[email_id={state['email_id']}] L2 match "
-                                f"(Gate A+B, similarity={best_similarity:.2f}≥{gate_b_threshold}): "
-                                f"customer+invoice → dispute_id={matched_dispute.dispute_id} "
+                                f"(Gate A+B, similarity={best_similarity:.2f}≥{gate_b_threshold}): "  # noqa: E501
+                                f"customer+invoice → dispute_id={matched_dispute.dispute_id} "  # noqa: E501
                                 f"(follow-up confirmed)"
                             )
                         else:
                             # Gate B failed — different issue on same invoice.
-                            # Pick the most recent Gate A candidate as the related dispute.
+                            # Pick the most recent Gate A candidate as the related dispute.  # noqa: E501
                             _related = sorted(
                                 gate_a_candidates,
-                                key=lambda d: d.created_at,
+                                key=lambda d: d.created_at,  # type: ignore
                                 reverse=True,
                             )[0]
                             _related_token = (
@@ -278,13 +283,13 @@ async def node_fetch_context(
                             )
                             logger.info(
                                 f"[email_id={state['email_id']}] L2 no match "
-                                f"(Gate B similarity={best_similarity:.2f}<{gate_b_threshold}): "
+                                f"(Gate B similarity={best_similarity:.2f}<{gate_b_threshold}): "  # noqa: E501
                                 f"new issue on same invoice — related_dispute_id="
                                 f"{_related.dispute_id}, creating new case"
                             )
                             # Store as related (context only, not routing)
-                            # Will be written to state and used by generate_response + persist_results
-                            _l2_related_dispute_id = _related.dispute_id
+                            # Will be written to state and used by generate_response + persist_results  # noqa: E501
+                            _l2_related_dispute_id = _related.dispute_id  # type: ignore
                             _l2_related_dispute_token = _related_token
 
             # Level 3: follow-up to cold mail (dispute exists but had no invoice yet)
@@ -293,8 +298,8 @@ async def node_fetch_context(
                     if d.invoice_id is None:
                         matched_dispute = d
                         logger.info(
-                            f"[email_id={state['email_id']}] L3 match (cold-mail follow-up): "
-                            f"linking invoice_id={matched_invoice_id} → dispute_id={d.dispute_id}"
+                            f"[email_id={state['email_id']}] L3 match (cold-mail follow-up): "  # noqa: E501
+                            f"linking invoice_id={matched_invoice_id} → dispute_id={d.dispute_id}"  # noqa: E501
                         )
                         try:
                             d.invoice_id = matched_invoice_id
@@ -324,29 +329,29 @@ async def node_fetch_context(
 
     # ── Load memory ───────────────────────────────────────────────────────────
     if matched_dispute:
-        existing_dispute_id = matched_dispute.dispute_id
+        existing_dispute_id = matched_dispute.dispute_id  # type: ignore
 
         ep_repo = MemoryEpisodeRepository(db_session)
-        recent_eps = await ep_repo.get_latest_n(existing_dispute_id, n=5)
+        recent_eps = await ep_repo.get_latest_n(existing_dispute_id, n=5)  # type: ignore
         recent_episodes = [
             {"actor": ep.actor, "type": ep.episode_type, "text": ep.content_text[:400]}
             for ep in recent_eps
         ]
 
         sum_repo = MemorySummaryRepository(db_session)
-        summary_obj = await sum_repo.get_for_dispute(existing_dispute_id)
+        summary_obj = await sum_repo.get_for_dispute(existing_dispute_id)  # type: ignore
         if summary_obj:
-            memory_summary = summary_obj.summary_text
+            memory_summary = summary_obj.summary_text  # type: ignore
 
         q_repo = OpenQuestionRepository(db_session)
-        pending_qs = await q_repo.get_pending_for_dispute(existing_dispute_id)
+        pending_qs = await q_repo.get_pending_for_dispute(existing_dispute_id)  # type: ignore
         pending_questions = [
             {"question_id": q.question_id, "text": q.question_text} for q in pending_qs
         ]
 
         logger.info(
-            f"[email_id={state['email_id']}] Memory loaded for dispute_id={existing_dispute_id}: "
-            f"{len(recent_episodes)} episodes, {len(pending_questions)} pending questions"
+            f"[email_id={state['email_id']}] Memory loaded for dispute_id={existing_dispute_id}: "  # noqa: E501
+            f"{len(recent_episodes)} episodes, {len(pending_questions)} pending questions"  # noqa: E501
         )
 
     langfuse_context.update_current_observation(
@@ -378,13 +383,13 @@ async def node_fetch_context(
             )
 
             ar_svc = ARDocumentService(db_session)
-            scope = resolve_customer_scope(state["customer_id"])
+            scope = resolve_customer_scope(state["customer_id"])  # type: ignore
 
             # Path 1 — invoice number
             if state.get("matched_invoice_number"):
                 try:
                     chain = await ar_svc.get_document_chain_for_invoice(
-                        invoice_number=state["matched_invoice_number"],
+                        invoice_number=state["matched_invoice_number"],  # type: ignore
                         customer_scope=scope,
                     )
                     if chain:

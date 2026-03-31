@@ -8,7 +8,9 @@ from src.core.exceptions import PaisaVasoolException
 logger = logging.getLogger(__name__)
 
 
-async def app_exception_handler(request: Request, exc: PaisaVasoolException):
+async def app_exception_handler(
+    request: Request, exc: PaisaVasoolException
+) -> JSONResponse:
     logger.warning(f"{request.method} {request.url} → {exc.status_code}: {exc.message}")
     return JSONResponse(
         status_code=exc.status_code,
@@ -20,7 +22,7 @@ async def app_exception_handler(request: Request, exc: PaisaVasoolException):
     )
 
 
-async def generic_exception_handler(request: Request, exc: Exception):
+async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     logger.error(
         f"Unhandled error on {request.method} {request.url}: {exc}", exc_info=True
     )

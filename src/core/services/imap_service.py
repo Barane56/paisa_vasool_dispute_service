@@ -34,8 +34,8 @@ ATTACHMENT_STORAGE_DIR = Path(
 ATTACHMENT_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 # GCS — imported lazily so the module loads even without google-cloud-storage installed
-from src.core.services.gcs_service import GCSUnavailable
-from src.core.services.gcs_service import upload_attachment as _gcs_upload
+from src.core.services.gcs_service import GCSUnavailable  # noqa: E402
+from src.core.services.gcs_service import upload_attachment as _gcs_upload  # noqa: E402
 
 # ── Dispute-token regex ───────────────────────────────────────────────────────
 DISPUTE_TOKEN_RE = re.compile(r"\bDISP-([A-Z0-9]{8,32})\b", re.IGNORECASE)
@@ -77,7 +77,7 @@ def test_mailbox_connection(
         if use_ssl:
             conn = imaplib.IMAP4_SSL(imap_host, imap_port)
         else:
-            conn = imaplib.IMAP4(imap_host, imap_port)
+            conn = imaplib.IMAP4(imap_host, imap_port)  # type: ignore
         conn.login(email_address, password)
         conn.select("INBOX", readonly=True)
         conn.logout()
@@ -156,7 +156,7 @@ def _extract_text_from_attachment(
         try:
             import io
 
-            import openpyxl
+            import openpyxl  # type: ignore
 
             wb = openpyxl.load_workbook(
                 io.BytesIO(file_bytes), read_only=True, data_only=True
@@ -182,7 +182,7 @@ def _extract_text_from_attachment(
         ext in ("png", "jpg", "jpeg", "gif", "webp", "tiff", "bmp")
         or "image/" in mime_type
     ):
-        return f"[Image attachment: {filename} — visual content, cannot extract text with current LLM]"
+        return f"[Image attachment: {filename} — visual content, cannot extract text with current LLM]"  # noqa: E501
 
     return (
         f"[Attachment: {filename} ({mime_type}) — unsupported type for text extraction]"
@@ -208,13 +208,13 @@ def _save_attachment(file_bytes: bytes, original_filename: str, mailbox_id: int)
             import logging as _log
 
             _log.getLogger(__name__).warning(
-                f"GCS upload failed for inbound attachment, falling back to local: {gcs_err}"
+                f"GCS upload failed for inbound attachment, falling back to local: {gcs_err}"  # noqa: E501
             )
         except Exception as gcs_err:
             import logging as _log
 
             _log.getLogger(__name__).warning(
-                f"GCS upload error for inbound attachment, falling back to local: {gcs_err}"
+                f"GCS upload error for inbound attachment, falling back to local: {gcs_err}"  # noqa: E501
             )
     # Local fallback
     safe_name = re.sub(r"[^\w.\-]", "_", original_filename)[:100]
@@ -266,7 +266,7 @@ def _parse_email_message(
 
     for part in msg.walk():
         ct = part.get_content_type()
-        cd = part.get("Content-Disposition", "")
+        part.get("Content-Disposition", "")
         filename = part.get_filename()
 
         if filename:
@@ -274,16 +274,18 @@ def _parse_email_message(
             filename = _decode_header_value(filename)
             try:
                 payload = part.get_payload(decode=True)
-                if payload:
+                if payload and isinstance(payload, bytes):
                     mime_type = (
                         ct
                         or mimetypes.guess_type(filename)[0]
                         or "application/octet-stream"
                     )
                     extracted = _extract_text_from_attachment(
-                        payload, filename, mime_type
+                        payload,
+                        filename,
+                        mime_type,  # type: ignore
                     )
-                    rel_path = _save_attachment(payload, filename, mailbox_id)
+                    rel_path = _save_attachment(payload, filename, mailbox_id)  # type: ignore
                     attachments.append(
                         {
                             "file_name": filename,
@@ -301,13 +303,13 @@ def _parse_email_message(
         if ct == "text/plain" and not body_text:
             payload = part.get_payload(decode=True)
             if payload:
-                body_text = payload.decode(
+                body_text = payload.decode(  # type: ignore
                     part.get_content_charset() or "utf-8", errors="replace"
                 )
         elif ct == "text/html" and not body_html:
             payload = part.get_payload(decode=True)
             if payload:
-                body_html = payload.decode(
+                body_html = payload.decode(  # type: ignore
                     part.get_content_charset() or "utf-8", errors="replace"
                 )
 
@@ -363,16 +365,16 @@ def fetch_unseen_emails(
         if use_ssl:
             conn = imaplib.IMAP4_SSL(imap_host, imap_port)
         else:
-            conn = imaplib.IMAP4(imap_host, imap_port)
+            conn = imaplib.IMAP4(imap_host, imap_port)  # type: ignore
 
         conn.login(email_address, password)
         conn.select("INBOX", readonly=False)
 
-        # Search for UNSEEN messages; if we have a last_uid, use UID SEARCH for efficiency
+        # Search for UNSEEN messages; if we have a last_uid, use UID SEARCH for efficiency  # noqa: E501
         if last_uid_seen:
-            status, data = conn.uid("search", None, f"UID {last_uid_seen + 1}:*")
+            status, data = conn.uid("search", None, f"UID {last_uid_seen + 1}:*")  # type: ignore
         else:
-            status, data = conn.uid("search", None, "UNSEEN")
+            status, data = conn.uid("search", None, "UNSEEN")  # type: ignore
 
         if status != "OK" or not data[0]:
             conn.logout()

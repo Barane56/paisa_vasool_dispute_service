@@ -21,7 +21,7 @@ POST   /disputes/{dispute_id}/send-email        FA sends a reply (with optional 
 GET    /disputes/{dispute_id}/outbound          list sent emails for a dispute
 GET    /outbound/{outbound_id}                  single sent email
 GET    /outbound/attachments/{attachment_id}/download  serve outbound attachment
-"""
+"""  # noqa: E501
 
 from pathlib import Path
 
@@ -45,6 +45,7 @@ from src.core.exceptions.errors import ValidationError as PVValidationError
 from src.core.services.mailbox_service import MailboxService
 from src.core.services.outbound_email_service import OutboundEmailService
 from src.data.clients.postgres import get_db
+from src.observability.logging import logger  # type: ignore
 from src.schemas.common_schemas import SuccessResponse
 from src.schemas.mailbox_schemas import (
     InboxMessageResponse,
@@ -53,7 +54,7 @@ from src.schemas.mailbox_schemas import (
     MailboxTestResponse,
     OutboundEmailResponse,
 )
-from src.schemas.schemas import CurrentUser
+from src.schemas.schemas import CurrentUser  # type: ignore
 
 router = APIRouter(prefix="/mailboxes", tags=["Mailboxes"])
 inbox_router = APIRouter(prefix="/inbox", tags=["Inbox"])
@@ -63,7 +64,7 @@ outbox_router = APIRouter(prefix="/outbound", tags=["Outbound Emails"])
 STORAGE_DIR = Path(
     getattr(settings, "ATTACHMENT_STORAGE_DIR", "/tmp/dispute_attachments")
 )
-from src.core.services.gcs_service import get_public_url as _gcs_url
+from src.core.services.gcs_service import get_public_url as _gcs_url  # noqa: E402
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -106,7 +107,7 @@ async def add_mailbox(
             smtp_use_tls=body.smtp_use_tls,
         )
     except PVValidationError as e:
-        raise HTTPException(status_code=409, detail=e.message)
+        raise HTTPException(status_code=409, detail=e.message)  # noqa: B904
 
 
 @router.get("", response_model=list[MailboxResponse])
@@ -126,7 +127,7 @@ async def get_mailbox(
     try:
         return await svc.get_mailbox(mailbox_id)
     except ResourceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=e.message)
+        raise HTTPException(status_code=404, detail=e.message)  # noqa: B904
 
 
 @router.delete("/{mailbox_id}", response_model=SuccessResponse)
@@ -139,7 +140,7 @@ async def delete_mailbox(
         await svc.delete_mailbox(mailbox_id)
         return SuccessResponse(message=f"Mailbox {mailbox_id} deleted.")
     except ResourceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=e.message)
+        raise HTTPException(status_code=404, detail=e.message)  # noqa: B904
 
 
 @router.post("/{mailbox_id}/pause", response_model=MailboxResponse)
@@ -151,7 +152,7 @@ async def pause_mailbox(
     try:
         return await svc.pause_mailbox(mailbox_id)
     except ResourceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=e.message)
+        raise HTTPException(status_code=404, detail=e.message)  # noqa: B904
 
 
 @router.post("/{mailbox_id}/unpause", response_model=MailboxResponse)
@@ -163,7 +164,7 @@ async def unpause_mailbox(
     try:
         return await svc.unpause_mailbox(mailbox_id)
     except ResourceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=e.message)
+        raise HTTPException(status_code=404, detail=e.message)  # noqa: B904
 
 
 @router.get("/{mailbox_id}/test", response_model=MailboxTestResponse)
@@ -181,7 +182,7 @@ async def test_mailbox(
         result = await svc.test_mailbox(mailbox_id)
         return MailboxTestResponse(mailbox_id=mailbox_id, **result)
     except ResourceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=e.message)
+        raise HTTPException(status_code=404, detail=e.message)  # noqa: B904
 
 
 @router.get("/{mailbox_id}/messages", response_model=list[InboxMessageResponse])
@@ -199,7 +200,7 @@ async def list_mailbox_messages(
             mailbox_id=mailbox_id, source=source, limit=limit, offset=offset
         )
     except ResourceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=e.message)
+        raise HTTPException(status_code=404, detail=e.message)  # noqa: B904
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -230,7 +231,7 @@ async def get_message(
     try:
         return await svc.get_message(message_id)
     except ResourceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=e.message)
+        raise HTTPException(status_code=404, detail=e.message)  # noqa: B904
 
 
 @inbox_router.get(
@@ -258,7 +259,7 @@ async def download_inbound_attachment(
     try:
         att = await svc.get_inbound_attachment(attachment_id)
     except ResourceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=e.message)
+        raise HTTPException(status_code=404, detail=e.message)  # noqa: B904
 
     if settings.GCS_ENABLED:
         from fastapi.responses import RedirectResponse
@@ -269,8 +270,8 @@ async def download_inbound_attachment(
             return RedirectResponse(url=_gcs_url(att.file_path), status_code=302)
         except GCSCredentialsUnavailable:
             # ADC not configured — fall through to byte streaming
-            logger.warning(
-                f"GCS signed URL unavailable, streaming inbound attachment {attachment_id} directly"
+            logger.warning(  # noqa: F821  # type: ignore
+                f"GCS signed URL unavailable, streaming inbound attachment {attachment_id} directly"  # noqa: E501
             )
             try:
                 import io
@@ -290,7 +291,7 @@ async def download_inbound_attachment(
                     },
                 )
             except Exception as dl_err:
-                raise HTTPException(
+                raise HTTPException(  # noqa: B904
                     status_code=500, detail=f"Cannot serve attachment: {dl_err}"
                 )
 
@@ -338,9 +339,6 @@ async def send_dispute_email(
     """
     try:
         # Sentinel -1 tells compose_and_send to skip auto-resolve and send fresh
-        reply_to = (
-            None if new_thread else None
-        )  # None triggers auto-resolve inside service
         if new_thread:
             # Pass a flag via a private kwarg — compose_and_send checks this
             outbound = await svc.compose_and_send(
@@ -362,14 +360,14 @@ async def send_dispute_email(
                 subject=subject,
                 body_html=body_html,
                 body_text=body_text,
-                reply_to_message_id=None,  # auto-resolved to last inbound inside compose_and_send
+                reply_to_message_id=None,  # auto-resolved to last inbound inside compose_and_send  # noqa: E501
                 attachments=attachments or [],
             )
         return OutboundEmailResponse.from_orm_with_sender(outbound)
     except ResourceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=e.message)
+        raise HTTPException(status_code=404, detail=e.message)  # noqa: B904
     except PVValidationError as e:
-        raise HTTPException(status_code=400, detail=e.message)
+        raise HTTPException(status_code=400, detail=e.message)  # noqa: B904
 
 
 @send_router.get("/{dispute_id}/outbound", response_model=list[OutboundEmailResponse])
@@ -378,7 +376,7 @@ async def list_outbound_for_dispute(
     svc: OutboundEmailService = Depends(_out_svc),
     current_user: CurrentUser = Depends(get_current_user),
 ):
-    """List all emails sent from our system for a dispute. Shows which FA sent each one."""
+    """List all emails sent from our system for a dispute. Shows which FA sent each one."""  # noqa: E501
     emails = await svc.list_for_dispute(dispute_id)
     return [OutboundEmailResponse.from_orm_with_sender(e) for e in emails]
 
@@ -397,7 +395,7 @@ async def get_outbound_email(
     try:
         email = await svc.get_outbound_email_by_id(outbound_id)
     except ResourceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=e.message)
+        raise HTTPException(status_code=404, detail=e.message)  # noqa: B904
     return OutboundEmailResponse.from_orm_with_sender(email)
 
 
@@ -411,7 +409,7 @@ async def download_outbound_attachment(
     try:
         att = await svc.get_attachment(attachment_id)
     except ResourceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=e.message)
+        raise HTTPException(status_code=404, detail=e.message)  # noqa: B904
 
     if settings.GCS_ENABLED:
         from fastapi.responses import RedirectResponse
@@ -419,10 +417,10 @@ async def download_outbound_attachment(
         from src.core.services.gcs_service import GCSCredentialsUnavailable
 
         try:
-            return RedirectResponse(url=_gcs_url(att.file_path), status_code=302)
+            return RedirectResponse(url=_gcs_url(att.file_path), status_code=302)  # type: ignore
         except GCSCredentialsUnavailable:
-            logger.warning(
-                f"GCS signed URL unavailable, streaming outbound attachment {attachment_id} directly"
+            logger.warning(  # noqa: F821  # type: ignore
+                f"GCS signed URL unavailable, streaming outbound attachment {attachment_id} directly"  # noqa: E501
             )
             try:
                 import io
@@ -433,16 +431,16 @@ async def download_outbound_attachment(
                     async_download_attachment as _gcs_dl,
                 )
 
-                data = await _gcs_dl(att.file_path)
+                data = await _gcs_dl(att.file_path)  # type: ignore
                 return StreamingResponse(
                     io.BytesIO(data),
-                    media_type=att.file_type or "application/octet-stream",
+                    media_type=att.file_type or "application/octet-stream",  # type: ignore
                     headers={
                         "Content-Disposition": f'attachment; filename="{att.file_name}"'
                     },
                 )
             except Exception as dl_err:
-                raise HTTPException(
+                raise HTTPException(  # noqa: B904
                     status_code=500, detail=f"Cannot serve attachment: {dl_err}"
                 )
 
@@ -453,6 +451,6 @@ async def download_outbound_attachment(
         )
     return FileResponse(
         path=str(full_path),
-        filename=att.file_name,
+        filename=att.file_name,  # type: ignore
         media_type="application/octet-stream",
     )

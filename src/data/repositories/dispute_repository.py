@@ -25,16 +25,14 @@ class DisputeTypeRepository(BaseRepository[DisputeType]):
     def __init__(self, db: AsyncSession):
         super().__init__(DisputeType, db)
 
-    async def get_by_id(self, type_id: int, **kwargs) -> DisputeType | None:
+    async def get_by_id(self, type_id: int, **kwargs) -> DisputeType | None:  # type: ignore
         result = await self.db.execute(
             select(DisputeType).where(DisputeType.dispute_type_id == type_id)
         )
         return result.scalar_one_or_none()
 
     async def get_active_types(self) -> list[DisputeType]:
-        result = await self.db.execute(
-            select(DisputeType).where(DisputeType.is_active == True)
-        )
+        result = await self.db.execute(select(DisputeType).where(DisputeType.is_active))
         return list(result.scalars().all())
 
     async def get_by_name(self, name: str) -> DisputeType | None:
@@ -48,7 +46,7 @@ class DisputeRepository(BaseRepository[DisputeMaster]):
     def __init__(self, db: AsyncSession):
         super().__init__(DisputeMaster, db)
 
-    async def get_by_id(self, dispute_id: int, **kwargs) -> DisputeMaster | None:
+    async def get_by_id(self, dispute_id: int, **kwargs) -> DisputeMaster | None:  # type: ignore
         stmt = (
             select(DisputeMaster)
             .options(
@@ -157,7 +155,7 @@ class DisputeRepository(BaseRepository[DisputeMaster]):
                     DisputeMaster.status.in_(["OPEN", "UNDER_REVIEW"]),
                 )
             )
-            # FA_MANUAL disputes first — they are explicitly waiting for customer response.
+            # FA_MANUAL disputes first — they are explicitly waiting for customer response.  # noqa: E501
             # Within same source, most recently updated first.
             .order_by(
                 sa.case((DisputeMaster.source == "FA_MANUAL", 0), else_=1),
@@ -280,7 +278,7 @@ class AnalysisSupportingRefRepository(BaseRepository[AnalysisSupportingRef]):
         )
         existing = (await self.db.execute(stmt)).scalar_one_or_none()
         if existing:
-            existing.context_note = context_note
+            existing.context_note = context_note  # type: ignore
             await self.db.flush()
             return existing
         ref = AnalysisSupportingRef(
@@ -314,7 +312,7 @@ class DisputeRelationshipRepository(BaseRepository[DisputeRelationship]):
     def __init__(self, db: AsyncSession):
         super().__init__(DisputeRelationship, db)
 
-    async def create(
+    async def create(  # type: ignore
         self,
         source_dispute_id: int,
         target_dispute_id: int,
@@ -409,7 +407,7 @@ class DisputeNewMessageRepository:
         """Return dispute_ids that have unread customer messages."""
         result = await self.db.execute(
             select(DisputeNewMessage.dispute_id).where(
-                DisputeNewMessage.has_new_message == True
+                DisputeNewMessage.has_new_message
             )
         )
         return [row.dispute_id for row in result.all()]

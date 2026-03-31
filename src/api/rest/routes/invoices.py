@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.rest.dependencies import get_current_user
 from src.core.services.invoice_service import InvoiceService
 from src.data.clients.postgres import get_db
-from src.schemas.schemas import (
+from src.schemas.schemas import (  # type: ignore
     CurrentUser,
     InvoiceListResponse,
     InvoiceResponse,
@@ -37,7 +37,7 @@ async def upload_invoice(
     service = InvoiceService(db)
     return await service.upload_and_extract(
         file_bytes=file_bytes,
-        file_name=file.filename,
+        file_name=file.filename,  # type: ignore
         invoice_url=invoice_url,
     )
 
@@ -85,12 +85,12 @@ async def get_invoice_by_number(
 
     # Verify the invoice belongs to the given customer_email / their domain
     pay_repo = PaymentRepository(db)
-    payments = await pay_repo.get_all_by_invoice_number(invoice.invoice_number)
+    payments = await pay_repo.get_all_by_invoice_number(invoice.invoice_number)  # type: ignore
     invoice_customer_id = payments[0].customer_id if payments else None
 
     if invoice_customer_id:
         is_verified, reason = _check_invoice_ownership(
-            invoice_customer_id=invoice_customer_id,
+            invoice_customer_id=invoice_customer_id,  # type: ignore
             sender_email=customer_email,
         )
         if not is_verified:

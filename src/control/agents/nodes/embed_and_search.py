@@ -20,7 +20,7 @@ async def node_embed_and_search(
     Only runs when no invoice was matched (cold mail path).
     Embeds the email description and searches past episodes via pgvector cosine similarity.
     resolve_dispute_link uses the result to confirm or reject the candidate dispute.
-    """
+    """  # noqa: E501
     defaults = {
         **state,
         "similar_episodes": [],
@@ -33,7 +33,7 @@ async def node_embed_and_search(
         logger.info(
             f"[email_id={state['email_id']}] embed_and_search skipped: invoice matched"
         )
-        return defaults
+        return defaults  # type: ignore
 
     text_to_embed = (
         state.get("description", "").strip() or state.get("body_text", "").strip()
@@ -44,7 +44,7 @@ async def node_embed_and_search(
         logger.warning(
             f"[email_id={state['email_id']}] embed_and_search skipped: missing inputs"
         )
-        return defaults
+        return defaults  # type: ignore
 
     from src.config.settings import settings
     from src.data.repositories.repositories import MemoryEpisodeRepository
@@ -52,7 +52,7 @@ async def node_embed_and_search(
     embedding = await llm_client.embed(text_to_embed)
     if not embedding:
         logger.warning(f"[email_id={state['email_id']}] Embedding returned None")
-        return defaults
+        return defaults  # type: ignore
 
     ep_repo = MemoryEpisodeRepository(db_session)
     similar_eps = await ep_repo.search_similar_by_customer(
@@ -88,4 +88,4 @@ async def node_embed_and_search(
         f"[email_id={state['email_id']}] No matches above "
         f"threshold={settings.EPISODE_SIMILARITY_THRESHOLD}"
     )
-    return defaults
+    return defaults  # type: ignore

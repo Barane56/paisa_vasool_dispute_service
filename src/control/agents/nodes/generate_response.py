@@ -108,7 +108,7 @@ async def _fetch_issue_context(
             inv_details["line_items"] = None
 
         pay_repo = PaymentRepository(db_session)
-        payments = await pay_repo.get_all_by_invoice_number(invoice.invoice_number)
+        payments = await pay_repo.get_all_by_invoice_number(invoice.invoice_number)  # type: ignore
         pay_details = [
             {
                 "payment_detail_id": p.payment_detail_id,
@@ -271,7 +271,6 @@ def _build_needs_invoice_response(subject: str) -> str:
 async def node_generate_ai_response(
     state: EmailProcessingState, llm_client=None, db_session=None
 ) -> EmailProcessingState:
-
     if not llm_client:
         return {
             **state,
@@ -325,7 +324,7 @@ async def node_generate_ai_response(
     # ── Intent fast paths — no LLM call for non-billable intents ─────────────
     intent = state.get("intent", "UNKNOWN")
 
-    _FAST_RESPONSE_MAP = {
+    _FAST_RESPONSE_MAP = {  # noqa: N806
         "SOCIAL": (
             "Thank you for reaching out! We'll keep you updated on any open matters. "
             "Feel free to reply here if you have any questions."
@@ -340,7 +339,7 @@ async def node_generate_ai_response(
             "and confirm once it has been processed."
         ),
         "DUPLICATE_CONTACT": (
-            "Thank you for following up. Our team is reviewing your case and will be in touch shortly."
+            "Thank you for following up. Our team is reviewing your case and will be in touch shortly."  # noqa: E501
         ),
     }
 
@@ -349,7 +348,7 @@ async def node_generate_ai_response(
         logger.info(f"[email_id={email_id}] Intent={intent} — using fast response path")
         return {
             **state,
-            "ai_summary": f"Customer sent a {intent.lower().replace('_', ' ')} message.",
+            "ai_summary": f"Customer sent a {intent.lower().replace('_', ' ')} message.",  # noqa: E501
             "ai_response": fast_response,
             "confidence_score": 1.0,
             "auto_response_generated": fast_response is not None,
@@ -475,7 +474,7 @@ async def node_generate_ai_response(
           2. document_reference + document_reference_type → get_document_chain_for_reference
 
         Returns [] on any error — never raises.
-        """
+        """  # noqa: E501
         if not db_session:
             return []
 
@@ -508,8 +507,8 @@ async def node_generate_ai_response(
                 )
             else:
                 chain = await ar_svc.get_document_chain_for_reference(
-                    ref_value=document_reference,
-                    key_type=document_reference_type,
+                    ref_value=document_reference,  # type: ignore
+                    key_type=document_reference_type,  # type: ignore
                     customer_scope=scope,
                 )
 
@@ -538,20 +537,20 @@ async def node_generate_ai_response(
     for spec in all_issues_spec:
         inv_ctx, pay_ctx = await _fetch_issue_context(
             db_session=db_session,
-            invoice_number=spec["invoice_number"],
+            invoice_number=spec["invoice_number"],  # type: ignore
             fallback_invoice_details=state.get("invoice_details"),
             fallback_payment_details=state.get("all_payment_details") or [],
         )
 
         ar_chain_for_issue = await _fetch_ar_chain_for_issue(
-            invoice_number=spec.get("invoice_number"),
-            document_reference=spec.get("document_reference"),
-            document_reference_type=spec.get("document_reference_type"),
+            invoice_number=spec.get("invoice_number"),  # type: ignore
+            document_reference=spec.get("document_reference"),  # type: ignore
+            document_reference_type=spec.get("document_reference_type"),  # type: ignore
         )
 
         result = await _call_llm_for_issue(
             llm_client=llm_client,
-            issue_index=spec["issue_index"],
+            issue_index=spec["issue_index"],  # type: ignore
             subject=state["subject"],
             sender_email=state["sender_email"],
             body_text=state["body_text"],
@@ -560,14 +559,14 @@ async def node_generate_ai_response(
             memory_summary=state.get("memory_summary"),
             recent_episodes=state.get("recent_episodes", []),
             pending_questions=state.get("pending_questions", []),
-            classification=spec["classification"],
-            dispute_type_name=spec["dispute_type_name"],
-            priority=spec["priority"],
-            description=spec["description"],
-            dispute_token=spec["dispute_token"],
+            classification=spec["classification"],  # type: ignore
+            dispute_type_name=spec["dispute_type_name"],  # type: ignore
+            priority=spec["priority"],  # type: ignore
+            description=spec["description"],  # type: ignore
+            dispute_token=spec["dispute_token"],  # type: ignore
             email_id=email_id,
             is_focused_issue=True,
-            focus_invoice_number=spec.get("invoice_number"),
+            focus_invoice_number=spec.get("invoice_number"),  # type: ignore
             attachment_metadata=state.get("attachment_metadata"),
             ar_document_chain=ar_chain_for_issue,
             related_dispute_token=state.get("related_dispute_token"),

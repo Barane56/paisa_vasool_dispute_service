@@ -5,6 +5,7 @@ src/core/services/mailbox_service.py
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -97,18 +98,18 @@ class MailboxService:
         mb = await self.get_mailbox(mailbox_id)
 
         imap_ok, imap_msg = test_mailbox_connection(
-            imap_host=mb.imap_host,
-            imap_port=mb.imap_port,
-            use_ssl=mb.use_ssl,
-            email_address=mb.email_address,
-            password_enc=mb.password_enc,
+            imap_host=mb.imap_host,  # type: ignore
+            imap_port=mb.imap_port,  # type: ignore
+            use_ssl=mb.use_ssl,  # type: ignore
+            email_address=mb.email_address,  # type: ignore
+            password_enc=mb.password_enc,  # type: ignore
         )
         smtp_ok, smtp_msg = test_smtp_connection(
             smtp_host=mb.effective_smtp_host,
-            smtp_port=mb.smtp_port,
-            smtp_use_tls=mb.smtp_use_tls,
-            username=mb.email_address,
-            password_enc=mb.password_enc,
+            smtp_port=mb.smtp_port,  # type: ignore
+            smtp_use_tls=mb.smtp_use_tls,  # type: ignore
+            username=mb.email_address,  # type: ignore
+            password_enc=mb.password_enc,  # type: ignore
         )
         combined_msg = f"IMAP: {imap_msg} | SMTP: {smtp_msg}"
         return {"imap_ok": imap_ok, "smtp_ok": smtp_ok, "message": combined_msg}
@@ -140,7 +141,7 @@ class MailboxService:
     ) -> list[EmailInboxMessage]:
         return await self.msg_repo.list_for_dispute(dispute_id)
 
-    async def get_inbound_attachment(self, attachment_id: int):
+    async def get_inbound_attachment(self, attachment_id: int) -> Any:
         """Fetch an inbound EmailMessageAttachment record by ID."""
         from sqlalchemy import select
 
@@ -153,12 +154,14 @@ class MailboxService:
         )
         att = result.scalar_one_or_none()
         if not att:
-            from src.core.exceptions import ResourceNotFoundError
+            from src.core.exceptions import ResourceNotFoundError  # type: ignore
 
-            raise ResourceNotFoundError("EmailMessageAttachment", attachment_id)
+            raise ResourceNotFoundError(
+                "EmailMessageAttachment", attachment_id
+            ) from None
         return att
 
-    async def get_outbound_email_by_id(self, outbound_id: int):
+    async def get_outbound_email_by_id(self, outbound_id: int) -> Any:
         """Fetch a single OutboundEmail with attachments and sender."""
         from sqlalchemy import select
         from sqlalchemy.orm import joinedload, selectinload
@@ -175,7 +178,7 @@ class MailboxService:
         )
         email = result.scalar_one_or_none()
         if not email:
-            from src.core.exceptions import ResourceNotFoundError
+            from src.core.exceptions import ResourceNotFoundError  # type: ignore
 
-            raise ResourceNotFoundError("OutboundEmail", outbound_id)
+            raise ResourceNotFoundError("OutboundEmail", outbound_id) from None
         return email

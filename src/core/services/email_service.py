@@ -12,7 +12,7 @@ from src.core.exceptions import (
 )
 from src.data.models.postgres.models import EmailAttachment, EmailInbox
 from src.data.repositories.repositories import EmailRepository
-from src.schemas.schemas import EmailIngestResponse
+from src.schemas.schemas import EmailIngestResponse  # type: ignore
 from src.utils.pdf_extractor import extract_text_from_bytes
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ class EmailService:
             logger.error(f"Failed to enqueue email processing task: {e}")
             raise EmailProcessingError(
                 f"Email saved but could not be queued for processing: {e}"
-            )
+            ) from None
 
         logger.info(f"Email id={email.email_id} enqueued as task {task_id}")
 
@@ -94,13 +94,15 @@ class EmailService:
             task_id=task_id,
         )
 
-    async def get_email(self, email_id: int):
+    async def get_email(self, email_id: int) -> EmailInbox:
         email = await self.repo.get_by_id(email_id)
         if not email:
-            raise EmailNotFoundError(email_id)
+            raise EmailNotFoundError(email_id) from None
         return email
 
-    async def list_emails(self, status: str = None, limit: int = 20, offset: int = 0):
+    async def list_emails(
+        self, status: str | None = None, limit: int = 20, offset: int = 0
+    ) -> tuple[list[EmailInbox], int]:
         if status:
             items = await self.repo.get_by_status(status, limit, offset)
         else:

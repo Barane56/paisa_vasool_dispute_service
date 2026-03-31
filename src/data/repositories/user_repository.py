@@ -12,7 +12,7 @@ class UserRepository(BaseRepository[User]):
     def __init__(self, db: AsyncSession):
         super().__init__(User, db)
 
-    async def get_by_id(self, user_id: int, **kwargs) -> User | None:
+    async def get_by_id(self, user_id: int, **kwargs) -> User | None:  # type: ignore
         result = await self.db.execute(select(User).where(User.user_id == user_id))
         return result.scalar_one_or_none()
 
@@ -38,4 +38,4 @@ class UserRoleRepository(BaseRepository[UserRole]):
             .order_by(func.random())
             .limit(10)
         )
-        return stmt.scalars().all()
+        return stmt.scalars().all()  # type: ignore

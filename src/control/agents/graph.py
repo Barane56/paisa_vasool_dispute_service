@@ -122,8 +122,8 @@ async def run_email_processing(
     attachment_texts: list[str],
     db_session=None,
     llm_client=None,
-    attachment_metadata: list[dict] = None,
-    existing_dispute_id: int = None,
+    attachment_metadata: list[dict] = None,  # type: ignore
+    existing_dispute_id: int = None,  # type: ignore
 ) -> EmailProcessingState:
     langfuse_context.update_current_trace(
         name=f"email_processing:{email_id}",

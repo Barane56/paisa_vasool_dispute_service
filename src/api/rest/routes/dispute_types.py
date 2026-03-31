@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.rest.dependencies import get_current_user
 from src.core.services.dispute_type_service import DisputeTypeService
 from src.data.clients.postgres import get_db
-from src.schemas.schemas import (
+from src.schemas.schemas import (  # type: ignore
     CurrentUser,
     DisputeTypeCreate,
     DisputeTypeResponse,

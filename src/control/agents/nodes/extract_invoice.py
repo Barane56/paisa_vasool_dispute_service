@@ -122,7 +122,7 @@ async def node_extract_invoice_data_via_groq(
                 )
             else:
                 logger.warning(
-                    f"[email_id={state['email_id']}] Invoice extraction returned no invoices."
+                    f"[email_id={state['email_id']}] Invoice extraction returned no invoices."  # noqa: E501
                 )
 
         except Exception as e:

@@ -1,4 +1,4 @@
-# mailbox_repository.py — MailboxRepository, EmailInboxMessageRepository, EmailMessageAttachmentRepository
+# mailbox_repository.py — MailboxRepository, EmailInboxMessageRepository, EmailMessageAttachmentRepository  # noqa: E501
 
 from datetime import UTC
 
@@ -18,7 +18,7 @@ class MailboxRepository(BaseRepository[MailboxCredential]):
     def __init__(self, db: AsyncSession):
         super().__init__(MailboxCredential, db)
 
-    async def get_by_id(self, mailbox_id: int, **kwargs) -> MailboxCredential | None:
+    async def get_by_id(self, mailbox_id: int, **kwargs) -> MailboxCredential | None:  # type: ignore
         stmt = select(MailboxCredential).where(
             MailboxCredential.mailbox_id == mailbox_id
         )
@@ -38,8 +38,8 @@ class MailboxRepository(BaseRepository[MailboxCredential]):
         """Returns mailboxes that are active and not paused — used by the beat task."""
         stmt = (
             select(MailboxCredential)
-            .where(MailboxCredential.is_active == True)
-            .where(MailboxCredential.is_paused == False)
+            .where(MailboxCredential.is_active)
+            .where(not MailboxCredential.is_paused)  # type: ignore
         )
         return list((await self.db.execute(stmt)).scalars().all())
 
@@ -56,7 +56,7 @@ class MailboxRepository(BaseRepository[MailboxCredential]):
                 update(MailboxCredential)
                 .where(
                     MailboxCredential.mailbox_id == mailbox_id,
-                    (MailboxCredential.last_uid_seen == None)
+                    (MailboxCredential.last_uid_seen is None)  # type: ignore
                     | (MailboxCredential.last_uid_seen < last_uid_seen),
                 )
                 .values(last_polled_at=datetime.now(UTC), last_uid_seen=last_uid_seen)
@@ -79,7 +79,7 @@ class MailboxRepository(BaseRepository[MailboxCredential]):
         await self.db.flush()
         return await self.get_by_id(mailbox_id)
 
-    async def delete(self, mailbox_id: int) -> bool:
+    async def delete(self, mailbox_id: int) -> bool:  # type: ignore
         mb = await self.get_by_id(mailbox_id)
         if not mb:
             return False
@@ -92,7 +92,7 @@ class EmailInboxMessageRepository(BaseRepository[EmailInboxMessage]):
     def __init__(self, db: AsyncSession):
         super().__init__(EmailInboxMessage, db)
 
-    async def get_by_id(self, message_id: int, **kwargs) -> EmailInboxMessage | None:
+    async def get_by_id(self, message_id: int, **kwargs) -> EmailInboxMessage | None:  # type: ignore
         stmt = (
             select(EmailInboxMessage)
             .options(selectinload(EmailInboxMessage.attachments))

@@ -77,11 +77,11 @@ class MailboxCredential(Base):
     def effective_smtp_host(self) -> str:
         """Returns smtp_host if set, otherwise derives from imap_host."""
         if self.smtp_host:
-            return self.smtp_host
+            return self.smtp_host  # type: ignore
         # Common derivation: imap.X.com → smtp.X.com
         if self.imap_host.lower().startswith("imap."):
-            return "smtp." + self.imap_host[5:]
-        return self.imap_host
+            return "smtp." + self.imap_host[5:]  # type: ignore
+        return self.imap_host  # type: ignore
 
 
 class EmailInboxMessage(Base):

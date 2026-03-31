@@ -39,7 +39,7 @@ _storage_client = None
 _gcs_init_failed = False  # once broken, stop retrying every call
 
 
-class GCSUnavailable(Exception):
+class GCSUnavailable(Exception):  # noqa: N818
     """Raised when GCS is not reachable — callers must fall back to local storage."""
 
 
@@ -64,7 +64,7 @@ def _get_bucket():
         return _bucket
 
     try:
-        from google.cloud import storage
+        from google.cloud import storage  # type: ignore
     except ImportError as exc:
         _gcs_init_failed = True
         raise GCSUnavailable(
@@ -114,7 +114,7 @@ def _sync_signed_url(blob_path: str, expiry_minutes: int) -> str:
             )
         except DefaultCredentialsError as cred_err:
             raise GCSUnavailable(
-                f"ADC not found — set GOOGLE_APPLICATION_CREDENTIALS. Original: {cred_err}"
+                f"ADC not found — set GOOGLE_APPLICATION_CREDENTIALS. Original: {cred_err}"  # noqa: E501
             ) from cred_err
 
         source_credentials.refresh(google.auth.transport.requests.Request())
@@ -128,7 +128,7 @@ def _sync_signed_url(blob_path: str, expiry_minutes: int) -> str:
                 lifetime=300,
             )
         else:
-            signing_credentials = source_credentials
+            signing_credentials = source_credentials  # type: ignore
 
         blob = _get_bucket().blob(blob_path)
         url = blob.generate_signed_url(

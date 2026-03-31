@@ -12,7 +12,7 @@ Table schema reminder:
         reference_table TEXT   (e.g. 'payment_detail', 'invoice_data', 'email_attachments')
         ref_id_value    INT    (PK of the referenced row)
         context_note    TEXT   (why this document is relevant)
-"""
+"""  # noqa: E501
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +25,7 @@ from src.data.repositories.repositories import (
     DisputeAIAnalysisRepository,
     DisputeRepository,
 )
-from src.schemas.schemas import (
+from src.schemas.schemas import (  # type: ignore
     CurrentUser,
     SuccessResponse,
     SupportingRefCreate,
@@ -44,7 +44,7 @@ async def list_supporting_docs(
 ):
     """
     Return all supporting document references attached to any analysis of the given dispute.
-    """
+    """  # noqa: E501
     dispute_repo = DisputeRepository(db)
     dispute = await dispute_repo.get_by_id(dispute_id)
     if not dispute:

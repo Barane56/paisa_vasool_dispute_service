@@ -112,7 +112,7 @@ def _extract_tabular(text: str) -> dict[str, str]:
     Scan for runs of known label lines, then map each label's
     positional offset to the corresponding value line below.
     """
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    lines = [l.strip() for l in text.split("\n") if l.strip()]  # noqa: E741
     n = len(lines)
     result: dict[str, str] = {}
     i = 0
@@ -245,7 +245,7 @@ Return ONLY valid JSON with exactly these keys (null if absent):
   "contract_number":    "...",
   "payment_ref":        "...",
   "credit_note_number": "..."
-}}"""
+}}"""  # noqa: E501
 
 
 async def _validate_via_llm(
@@ -266,7 +266,7 @@ async def _validate_via_llm(
         )
         raw = await client.chat_fast(
             prompt=prompt,
-            system="You are a precise AR document parser. Return only valid JSON. No markdown.",
+            system="You are a precise AR document parser. Return only valid JSON. No markdown.",  # noqa: E501
             json_mode=True,
         )
         parsed = json.loads(raw) if isinstance(raw, str) else raw

@@ -159,7 +159,7 @@ async def node_identify_invoice(
 
     # Step 2: Groq extraction — used when sender domain is generic or absent
     if not customer_id and state.get("groq_extracted"):
-        groq_cid = state["groq_extracted"].get("customer_id") or state[
+        groq_cid = state["groq_extracted"].get("customer_id") or state[  # type: ignore
             "groq_extracted"
         ].get("customer_name")
         if groq_cid:
@@ -183,13 +183,13 @@ async def node_identify_invoice(
     if matched_invoice:
         # Fetch payment records to get customer_id
         _payments = await pay_repo.get_all_by_invoice_number(
-            matched_invoice.invoice_number
+            matched_invoice.invoice_number  # type: ignore
         )
         _invoice_customer_id = _payments[0].customer_id if _payments else None
 
         if _invoice_customer_id:
             is_verified, reason = _check_invoice_ownership(
-                invoice_customer_id=_invoice_customer_id,
+                invoice_customer_id=_invoice_customer_id,  # type: ignore
                 sender_email=state["sender_email"],
             )
             if not is_verified:
@@ -219,11 +219,11 @@ async def node_identify_invoice(
     matched_payment_ids: list[int] = []
     if matched_invoice:
         payments = await pay_repo.get_all_by_invoice_number(
-            matched_invoice.invoice_number
+            matched_invoice.invoice_number  # type: ignore
         )
-        matched_payment_ids = [p.payment_detail_id for p in payments]
+        matched_payment_ids = [p.payment_detail_id for p in payments]  # type: ignore
         logger.info(
-            f"[email_id={state['email_id']}] Matched invoice={matched_invoice.invoice_number}, "
+            f"[email_id={state['email_id']}] Matched invoice={matched_invoice.invoice_number}, "  # noqa: E501
             f"payments={matched_payment_ids}, customer_id={customer_id}"
         )
     else:
@@ -246,8 +246,8 @@ async def node_identify_invoice(
 
     return {
         **state,
-        "matched_invoice_id": matched_invoice.invoice_id if matched_invoice else None,
-        "matched_invoice_number": matched_invoice.invoice_number
+        "matched_invoice_id": matched_invoice.invoice_id if matched_invoice else None,  # type: ignore
+        "matched_invoice_number": matched_invoice.invoice_number  # type: ignore
         if matched_invoice
         else None,
         "matched_payment_ids": matched_payment_ids,

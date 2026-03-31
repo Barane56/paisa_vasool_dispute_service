@@ -73,7 +73,7 @@ async def test_download(blob_path: str):
         # Verify the file actually exists before redirecting
         download_attachment(blob_path)
     except Exception:
-        raise HTTPException(
+        raise HTTPException(  # noqa: B904
             status_code=404, detail=f"File not found in GCS: {blob_path}"
         )
 

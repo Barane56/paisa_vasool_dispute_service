@@ -65,7 +65,7 @@ async def node_resolve_token(
         return {**state, "token_matched_dispute_id": None}
 
     logger.info(
-        f"[email_id={state['email_id']}] resolve_token: found token={token} (PV- format)"
+        f"[email_id={state['email_id']}] resolve_token: found token={token} (PV- format)"  # noqa: E501
     )
 
     if not db_session:
@@ -86,7 +86,7 @@ async def node_resolve_token(
 
     if not dispute:
         logger.warning(
-            f"[email_id={state['email_id']}] resolve_token: token={token} not found in DB — "
+            f"[email_id={state['email_id']}] resolve_token: token={token} not found in DB — "  # noqa: E501
             "may be stale or tampered"
         )
         langfuse_context.update_current_observation(
@@ -96,7 +96,7 @@ async def node_resolve_token(
 
     dispute_id = dispute.dispute_id
     logger.info(
-        f"[email_id={state['email_id']}] resolve_token: TOKEN MATCH → dispute_id={dispute_id}"
+        f"[email_id={state['email_id']}] resolve_token: TOKEN MATCH → dispute_id={dispute_id}"  # noqa: E501
     )
 
     # Reload memory so downstream nodes have full context
@@ -105,19 +105,19 @@ async def node_resolve_token(
     pending_questions = []
 
     ep_repo = MemoryEpisodeRepository(db_session)
-    recent_eps = await ep_repo.get_latest_n(dispute_id, n=5)
+    recent_eps = await ep_repo.get_latest_n(dispute_id, n=5)  # type: ignore
     recent_episodes = [
         {"actor": ep.actor, "type": ep.episode_type, "text": ep.content_text[:400]}
         for ep in recent_eps
     ]
 
     sum_repo = MemorySummaryRepository(db_session)
-    summary_obj = await sum_repo.get_for_dispute(dispute_id)
+    summary_obj = await sum_repo.get_for_dispute(dispute_id)  # type: ignore
     if summary_obj:
-        memory_summary = summary_obj.summary_text
+        memory_summary = summary_obj.summary_text  # type: ignore
 
     q_repo = OpenQuestionRepository(db_session)
-    pending_qs = await q_repo.get_pending_for_dispute(dispute_id)
+    pending_qs = await q_repo.get_pending_for_dispute(dispute_id)  # type: ignore
     pending_questions = [
         {"question_id": q.question_id, "text": q.question_text} for q in pending_qs
     ]
@@ -133,11 +133,11 @@ async def node_resolve_token(
 
     return {
         **state,
-        "token_matched_dispute_id": dispute_id,
-        "existing_dispute_id": dispute_id,
+        "token_matched_dispute_id": dispute_id,  # type: ignore
+        "existing_dispute_id": dispute_id,  # type: ignore
         "recent_episodes": recent_episodes,
         "memory_summary": memory_summary,
         "pending_questions": pending_questions,
         # Carry over customer_id from the original dispute if not yet known
-        "customer_id": state.get("customer_id") or dispute.customer_id,
+        "customer_id": state.get("customer_id") or dispute.customer_id,  # type: ignore
     }

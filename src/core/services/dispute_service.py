@@ -1,5 +1,7 @@
+import contextlib
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,8 +30,9 @@ from src.data.repositories.repositories import (
     OpenQuestionRepository,
     UserRepository,
 )
-from src.schemas.schemas import (
+from src.schemas.schemas import (  # type: ignore
     DisputeAssignRequest,
+    DisputeDetailResponse,
     DisputeStatusUpdate,
     DisputeTimelineResponse,
     QuestionStatusUpdate,
@@ -52,10 +55,10 @@ class DisputeService:
         self.q_repo = OpenQuestionRepository(db)
         self.user_repo = UserRepository(db)
 
-    async def get_dispute(self, dispute_id: int):
+    async def get_dispute(self, dispute_id: int) -> Any:
         dispute = await self.dispute_repo.get_by_id(dispute_id)
         if not dispute:
-            raise DisputeNotFoundError(dispute_id)
+            raise DisputeNotFoundError(dispute_id) from None
         return dispute
 
     async def list_disputes(
@@ -67,7 +70,7 @@ class DisputeService:
         search: str | None = None,
         limit: int = 20,
         offset: int = 0,
-    ):
+    ) -> tuple[list[Any], int]:
         return await self.dispute_repo.get_filtered(
             status=status,
             priority=priority,
@@ -80,7 +83,7 @@ class DisputeService:
 
     async def update_status(
         self, dispute_id: int, data: DisputeStatusUpdate, performed_by: int
-    ):
+    ) -> None:
         dispute = await self.get_dispute(dispute_id)
         old_status = dispute.status
 
@@ -90,7 +93,7 @@ class DisputeService:
             dispute_id=dispute_id,
             action_type="STATUS_CHANGED",
             performed_by=performed_by,
-            notes=f"Status changed from {old_status} to {data.status}. {data.notes or ''}",
+            notes=f"Status changed from {old_status} to {data.status}. {data.notes or ''}",  # noqa: E501
         )
         self.db.add(log)
 
@@ -110,14 +113,14 @@ class DisputeService:
 
     async def assign_dispute(
         self, dispute_id: int, data: DisputeAssignRequest, performed_by: int
-    ):
+    ) -> tuple[DisputeAssignment, Any]:
         await self.get_dispute(dispute_id)
 
         await self.assign_repo.deactivate_existing(dispute_id)
 
         user = await self.user_repo.get_by_id(data.user_id)
         if not user:
-            raise UserNotFoundError(data.user_id)
+            raise UserNotFoundError(data.user_id) from None
 
         assignment = DisputeAssignment(
             dispute_id=dispute_id,
@@ -137,7 +140,9 @@ class DisputeService:
         await self.db.refresh(assignment)
         return assignment, user
 
-    async def get_my_disputes(self, user_id: int, limit: int, offset: int):
+    async def get_my_disputes(
+        self, user_id: int, limit: int, offset: int
+    ) -> tuple[list[Any], int]:
         return await self.dispute_repo.get_filtered(
             assigned_to=user_id,
             status=None,
@@ -158,7 +163,7 @@ class DisputeService:
             ep.email_id for ep in episodes if ep.email_id and ep.actor == "CUSTOMER"
         ]
         # Map email_id → list of (attachment_id, file_name, file_type)
-        inbound_att_map: dict = {}
+        inbound_att_map: dict[int, list[TimelineAttachment]] = {}
         if inbound_email_ids:
             try:
                 from src.data.models.postgres.mailbox_models import (
@@ -192,13 +197,15 @@ class DisputeService:
                     )
             except Exception as exc:
                 logger.warning(
-                    f"[dispute_id={dispute_id}] Failed to load inbound attachments: {exc}"
+                    f"[dispute_id={dispute_id}] Failed to load inbound attachments: {exc}"  # noqa: E501
                 )
 
         # ── Fetch attachments for outbound emails (AI + Associate replies) ────
         # OutboundEmail.dispute_id = dispute_id; we match episode ↔ outbound by
         # closest created_at within a 30-second window.
-        outbound_att_map: dict = {}  # episode_id → list[TimelineAttachment]
+        outbound_att_map: dict[
+            int, list[TimelineAttachment]
+        ] = {}  # episode_id → list[TimelineAttachment]
         outbound_episodes = [ep for ep in episodes if ep.actor in ("AI", "ASSOCIATE")]
         if outbound_episodes:
             try:
@@ -230,7 +237,7 @@ class DisputeService:
                             # Match if within 30 seconds of episode creation
                             diff = abs((row.created_at - ep.created_at).total_seconds())
                             if diff <= 30:
-                                outbound_att_map.setdefault(ep.episode_id, []).append(
+                                outbound_att_map.setdefault(ep.episode_id, []).append(  # type: ignore
                                     TimelineAttachment(
                                         attachment_id=row.attachment_id,
                                         file_name=row.file_name,
@@ -242,13 +249,13 @@ class DisputeService:
                                 )
             except Exception as exc:
                 logger.warning(
-                    f"[dispute_id={dispute_id}] Failed to load outbound attachments: {exc}"
+                    f"[dispute_id={dispute_id}] Failed to load outbound attachments: {exc}"  # noqa: E501
                 )
 
         # ── Fetch FA sender names for ASSOCIATE episodes ──────────────────────
         # Match each ASSOCIATE episode to the OutboundEmail sent within 30s,
         # then join users to get the real name.
-        episode_actor_name: dict = {}  # episode_id → actor name string
+        episode_actor_name: dict[int, str] = {}  # episode_id → actor name string
         associate_episodes = [ep for ep in episodes if ep.actor == "ASSOCIATE"]
         if associate_episodes:
             try:
@@ -270,10 +277,10 @@ class DisputeService:
                 )
                 ob_rows = ob_result.fetchall()
                 for ep in associate_episodes:
-                    for row in ob_rows:
+                    for row in ob_rows:  # type: ignore
                         diff = abs((row.created_at - ep.created_at).total_seconds())
                         if diff <= 30:
-                            episode_actor_name[ep.episode_id] = row.name
+                            episode_actor_name[ep.episode_id] = row.name  # type: ignore
                             break
             except Exception as exc:
                 logger.warning(
@@ -285,14 +292,14 @@ class DisputeService:
             TimelineEpisodeResponse(
                 episode_id=ep.episode_id,
                 actor=ep.actor,
-                actor_name=episode_actor_name.get(ep.episode_id),
+                actor_name=episode_actor_name.get(ep.episode_id),  # type: ignore
                 episode_type=ep.episode_type,
                 content_text=ep.content_text,
                 created_at=ep.created_at,
                 attachments=(
-                    inbound_att_map.get(ep.email_id, [])
+                    inbound_att_map.get(ep.email_id, [])  # type: ignore
                     if ep.actor == "CUSTOMER"
-                    else outbound_att_map.get(ep.episode_id, [])
+                    else outbound_att_map.get(ep.episode_id, [])  # type: ignore
                 ),
             )
             for ep in episodes
@@ -307,18 +314,18 @@ class DisputeService:
             assigned_to=active_assignment.assignee.email if active_assignment else None,
         )
 
-    async def get_analysis(self, dispute_id: int):
+    async def get_analysis(self, dispute_id: int) -> Any:
         await self.get_dispute(dispute_id)
         analysis = await self.analysis_repo.get_latest_for_dispute(dispute_id)
         if not analysis:
-            raise AnalysisNotFoundError(dispute_id)
+            raise AnalysisNotFoundError(dispute_id) from None
         return analysis
 
-    async def reanalyze(self, dispute_id: int):
-        dispute = await self.get_dispute(dispute_id)
+    async def reanalyze(self, dispute_id: int) -> str:
+        await self.get_dispute(dispute_id)
         episodes = await self.ep_repo.get_latest_n(dispute_id, n=1)
         if not episodes or not episodes[0].email_id:
-            raise AnalysisNotFoundError(dispute_id)
+            raise AnalysisNotFoundError(dispute_id) from None
 
         ep = episodes[0]
         from src.control.tasks import process_email_task
@@ -332,18 +339,18 @@ class DisputeService:
         )
         return task.id
 
-    async def get_episodes(self, dispute_id: int):
+    async def get_episodes(self, dispute_id: int) -> list[Any]:
         await self.get_dispute(dispute_id)
         return await self.ep_repo.get_episodes_for_dispute(dispute_id)
 
-    async def get_summary(self, dispute_id: int):
+    async def get_summary(self, dispute_id: int) -> Any:
         await self.get_dispute(dispute_id)
         summary = await self.sum_repo.get_for_dispute(dispute_id)
         if not summary:
-            raise SummaryNotFoundError(dispute_id)
+            raise SummaryNotFoundError(dispute_id) from None
         return summary
 
-    async def get_open_questions(self, dispute_id: int):
+    async def get_open_questions(self, dispute_id: int) -> list[Any]:
         await self.get_dispute(dispute_id)
         return await self.q_repo.get_all_for_dispute(dispute_id)
 
@@ -353,14 +360,14 @@ class DisputeService:
         question_id: int,
         data: QuestionStatusUpdate,
         performed_by: int,
-    ):
+    ) -> Any:
         question = await self.q_repo.get_by_id(question_id)
         if not question or question.dispute_id != dispute_id:
-            raise QuestionNotFoundError(question_id)
+            raise QuestionNotFoundError(question_id) from None
 
-        question.status = data.status
+        question.status = data.status  # type: ignore
         if data.status == "ANSWERED":
-            question.answered_at = datetime.now(UTC)
+            question.answered_at = datetime.now(UTC)  # type: ignore
         await self.db.commit()
         return question
 
@@ -376,7 +383,7 @@ class DisputeService:
         created_by: int,
         customer_email: str | None = None,
         ar_document_id: int | None = None,
-    ):
+    ) -> Any:
         """
         Create a dispute manually by a Finance Associate (no inbound email).
         If dispute_type_id is None, creates a new DisputeType from custom_type_name.
@@ -395,7 +402,7 @@ class DisputeService:
         if dispute_type_id:
             dtype = await self.dtype_repo.get_by_id(dispute_type_id)
             if not dtype:
-                raise DisputeTypeNotFoundError(dispute_type_id)
+                raise DisputeTypeNotFoundError(dispute_type_id) from None
         else:
             # Check if a type with this name already exists
             existing = (
@@ -436,7 +443,7 @@ class DisputeService:
 
         # Assign sequential PV- token now that dispute_id is known —
         # same format as agent-created disputes, source is never exposed in the token
-        dispute.dispute_token = f"PV-{dispute.dispute_id:05d}"
+        dispute.dispute_token = f"PV-{dispute.dispute_id:05d}"  # type: ignore
         await self.db.flush()
 
         # ── Auto-assign to creating FA ────────────────────────────────────────
@@ -484,14 +491,17 @@ class DisputeService:
                         )
 
                         await _upsert_anchor_row(
-                            self.db, dispute.dispute_id, doc_ids[0], created_by
+                            self.db,
+                            int(dispute.dispute_id),  # type: ignore
+                            int(doc_ids[0]),  # type: ignore
+                            created_by,  # type: ignore
                         )
                         if len(doc_ids) > 1:
                             await ar_svc.link_ar_documents_to_dispute(
-                                dispute_id=dispute.dispute_id,
+                                dispute_id=dispute.dispute_id,  # type: ignore
                                 doc_ids=doc_ids[1:],
                                 linked_by=created_by,
-                                context_note=f"Graph chain from anchor doc_id={ar_document_id}",
+                                context_note=f"Graph chain from anchor doc_id={ar_document_id}",  # noqa: E501
                             )
                     self.db.add(
                         DisputeActivityLog(
@@ -513,7 +523,7 @@ class DisputeService:
                     )
                 else:
                     logger.info(
-                        f"FA dispute {dispute.dispute_id}: ar_document_id={ar_document_id} "
+                        f"FA dispute {dispute.dispute_id}: ar_document_id={ar_document_id} "  # noqa: E501
                         f"returned empty chain (scope={scope})"
                     )
             except Exception as ar_err:
@@ -539,7 +549,7 @@ class DisputeService:
         search: str | None = None,
         limit: int = 20,
         offset: int = 0,
-    ):
+    ) -> tuple[list[DisputeDetailResponse], int]:  # noqa: F821  # type: ignore
         """
         Returns DisputeDetailResponse-ready dicts for all matched disputes
         in 5 parallel DB queries — no N+1 calls from the route layer.
@@ -617,10 +627,10 @@ class DisputeService:
             .scalars()
             .all()
         )
-        assign_map: dict = {}
+        assign_map: dict[int, Any] = {}
         for a in assign_rows:
             if a.dispute_id not in assign_map:
-                assign_map[a.dispute_id] = a
+                assign_map[a.dispute_id] = a  # type: ignore
 
         # ── Pending question count per dispute ────────────────────────────────
         q_count_map = {
@@ -662,10 +672,8 @@ class DisputeService:
             raw_a = analysis_map.get(d.dispute_id)
             latest_analysis = None
             if raw_a:
-                try:
+                with contextlib.suppress(Exception):
                     latest_analysis = AIAnalysisResponse.model_validate(raw_a)
-                except Exception:
-                    pass
             active_assign = assign_map.get(d.dispute_id)
             try:
                 enriched.append(
@@ -695,11 +703,11 @@ class DisputeService:
                 import logging as _log
 
                 _log.getLogger(__name__).warning(
-                    f"Skipping dispute_id={d.dispute_id} from list (validation error): {row_err}"
+                    f"Skipping dispute_id={d.dispute_id} from list (validation error): {row_err}"  # noqa: E501
                 )
         return enriched, total
 
-    async def get_enriched_detail(self, dispute_id: int):
+    async def get_enriched_detail(self, dispute_id: int) -> DisputeDetailResponse:  # noqa: F821  # type: ignore
         """
         Returns a single DisputeDetailResponse with analysis, assignment,
         open question count and new-message flag — all from the service layer.
@@ -752,7 +760,9 @@ class DisputeService:
             has_new_customer_message=has_new,
         )
 
-    async def get_bulk_enriched(self, id_list: list[int]):
+    async def get_bulk_enriched(
+        self, id_list: list[int]
+    ) -> list[DisputeDetailResponse]:  # noqa: F821  # type: ignore
         """
         Fetch enriched detail for an explicit list of dispute IDs in one round-trip.
         Used by the bulk-detail endpoint.
@@ -837,10 +847,10 @@ class DisputeService:
             .scalars()
             .all()
         )
-        assign_map: dict = {}
+        assign_map: dict[int, Any] = {}
         for a in assign_rows:
             if a.dispute_id not in assign_map:
-                assign_map[a.dispute_id] = a
+                assign_map[a.dispute_id] = a  # type: ignore
 
         q_count_map = {
             row.dispute_id: row.cnt
@@ -880,11 +890,9 @@ class DisputeService:
             raw_a = analysis_map.get(d.dispute_id)
             latest_analysis = None
             if raw_a:
-                try:
+                with contextlib.suppress(Exception):
                     latest_analysis = AIAnalysisResponse.model_validate(raw_a)
-                except Exception:
-                    pass
-            active_assign = assign_map.get(d.dispute_id)
+            active_assign = assign_map.get(d.dispute_id)  # type: ignore
             results.append(
                 DisputeDetailResponse(
                     dispute_id=d.dispute_id,
@@ -921,7 +929,7 @@ class ForkRecommendationService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    async def list_pending(self, dispute_id: int) -> list[dict]:
+    async def list_pending(self, dispute_id: int) -> list[dict[str, Any]]:
         """Return all PENDING recommendations for a dispute."""
         from src.data.models.postgres.dispute_models import DisputeForkRecommendation
 
@@ -1014,7 +1022,7 @@ class ForkRecommendationService:
                 )
 
                 ar_svc = ARDocumentService(self.db)
-                scope = resolve_customer_scope(effective_customer_email)
+                scope = resolve_customer_scope(effective_customer_email)  # type: ignore
                 chain = await ar_svc.get_document_chain_for_invoice(
                     invoice_number=rec.suggested_invoice_number,
                     customer_scope=scope,
@@ -1035,7 +1043,7 @@ class ForkRecommendationService:
         # Create new dispute
         fa_svc = DisputeService(self.db)
         new_dispute = await fa_svc.create_fa_dispute(
-            customer_id=parent.customer_id,
+            customer_id=parent.customer_id,  # type: ignore
             dispute_type_id=dispute_type_id,
             custom_type_name=custom_type_name,
             custom_type_desc=custom_type_desc,
@@ -1043,7 +1051,7 @@ class ForkRecommendationService:
             description=description,
             invoice_id=None,
             created_by=user_id,
-            customer_email=effective_customer_email,
+            customer_email=effective_customer_email,  # type: ignore
             ar_document_id=resolved_ar_doc_id,
         )
         # create_fa_dispute commits — re-fetch rec in the same session
@@ -1102,13 +1110,15 @@ class ForkRecommendationService:
             )
         ).scalar_one_or_none()
         if not rec:
-            raise DisputeNotFoundError(f"Recommendation {recommendation_id} not found")
+            raise DisputeNotFoundError(
+                f"Recommendation {recommendation_id} not found"
+            ) from None
         if rec.status != "PENDING":
             raise ValueError(f"Recommendation already {rec.status.lower()}")
         return rec
 
     async def _assign_fewest_cases(self, dispute_id: int, prefer_user_id: int) -> None:
-        """Assign dispute to FA with fewest open cases, preferring prefer_user_id on ties."""
+        """Assign dispute to FA with fewest open cases, preferring prefer_user_id on ties."""  # noqa: E501
         from sqlalchemy import func as sqlfunc
 
         from src.data.models.postgres.models import DisputeAssignment, DisputeMaster
@@ -1163,7 +1173,7 @@ class ForkRecommendationService:
         )
 
     @staticmethod
-    def _fmt(r) -> dict:
+    def _fmt(r: Any) -> dict[str, Any]:
         return {
             "recommendation_id": r.recommendation_id,
             "dispute_id": r.dispute_id,

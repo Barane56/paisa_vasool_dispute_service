@@ -35,7 +35,7 @@ class DisputeType(Base):
     dispute_type_id = Column(Integer, primary_key=True)
     reason_name = Column(String(255), unique=True, nullable=False)
     description = Column(Text, nullable=True)
-    severity_level = Column(
+    severity_level = Column(  # type: ignore
         SQLEnum(SeverityLevel, name="severity_level_enum", create_constraint=True),
         nullable=True,
         index=True,
@@ -55,7 +55,7 @@ class DisputeType(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<DisputeType id={self.dispute_type_id} name={self.reason_name} severity={self.severity_level}>"
+        return f"<DisputeType id={self.dispute_type_id} name={self.reason_name} severity={self.severity_level}>"  # noqa: E501
 
 
 class DisputeMaster(Base):
@@ -240,7 +240,7 @@ class DisputeRelationship(Base):
         ForeignKey("dispute_master.dispute_id", ondelete="CASCADE"),
         nullable=False,
     )
-    relationship_type = Column(
+    relationship_type = Column(  # type: ignore
         Enum(
             "FORKED_FROM",
             "SAME_CUSTOMER_BATCH",
@@ -298,7 +298,7 @@ class DisputeAIAnalysis(Base):
     memory_context_used = Column(
         Boolean, default=False, server_default=text("FALSE"), nullable=False
     )
-    episodes_referenced = Column(ARRAY(Integer), nullable=True)
+    episodes_referenced = Column(ARRAY(Integer), nullable=True)  # type: ignore
 
     dispute = relationship("DisputeMaster", back_populates="ai_analyses", lazy="joined")
     supporting_refs = relationship(

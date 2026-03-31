@@ -28,7 +28,7 @@ Guidelines:
 - Do NOT write a subject line or salutation — write only the email body
 - End with: Best regards,\nFinance Team, PaisaVasool
 - Output ONLY the email body text, nothing else, no preamble
-"""
+"""  # noqa: E501
 
 
 async def generate_draft_email(
@@ -52,7 +52,7 @@ async def generate_draft_email(
             "ASSOCIATE": "Finance Associate",
             "SYSTEM": "System",
         }
-        role = role_map.get(ep.actor, ep.actor)
+        role = role_map.get(ep.actor, ep.actor)  # type: ignore
         dt = ep.created_at.strftime("%d %b %Y %H:%M")
         transcript_lines.append(f"[{dt}] {role}:\n{ep.content_text}")
 

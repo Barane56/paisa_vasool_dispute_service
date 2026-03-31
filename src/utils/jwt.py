@@ -20,6 +20,6 @@ def decode_access_token(token: str) -> dict:
             raise InvalidTokenError()
         return payload
     except jwt.ExpiredSignatureError:
-        raise TokenExpiredError()
+        raise TokenExpiredError() from None
     except jwt.InvalidTokenError:
-        raise InvalidTokenError()
+        raise InvalidTokenError() from None

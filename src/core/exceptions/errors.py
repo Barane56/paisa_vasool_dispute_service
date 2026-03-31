@@ -1,7 +1,7 @@
 from typing import Any
 
 
-class PaisaVasoolException(Exception):
+class PaisaVasoolException(Exception):  # noqa: N818
     """Base exception for all app errors."""
 
     def __init__(

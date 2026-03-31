@@ -16,7 +16,7 @@ from src.core.exceptions import (
 )
 from src.data.models.postgres.models import InvoiceData
 from src.data.repositories.repositories import InvoiceRepository
-from src.schemas.schemas import InvoiceUploadResponse
+from src.schemas.schemas import InvoiceUploadResponse  # type: ignore
 from src.utils.pdf_extractor import extract_text_from_bytes
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ class InvoiceService:
         try:
             extracted_data = await llm.extract_invoice_data(raw_text)
         except Exception as e:
-            raise InvoiceExtractionError(str(e))
+            raise InvoiceExtractionError(str(e)) from None
 
         invoice_number = extracted_data.get("invoice_number")
         if not invoice_number:
@@ -78,7 +78,7 @@ class InvoiceService:
         existing = await self.repo.get_by_invoice_number(invoice_number)
         if existing:
             logger.info(
-                f"Invoice {invoice_number} already exists (id={existing.invoice_id}). Updating details."
+                f"Invoice {invoice_number} already exists (id={existing.invoice_id}). Updating details."  # noqa: E501
             )
             existing.invoice_details = extracted_data
             await self.db.commit()
@@ -87,7 +87,7 @@ class InvoiceService:
                 invoice_id=existing.invoice_id,
                 invoice_number=invoice_number,
                 extracted_data=extracted_data,
-                message="Invoice already existed; details updated with Groq extraction.",
+                message="Invoice already existed; details updated with Groq extraction.",  # noqa: E501
             )
 
         # Store new invoice
@@ -109,17 +109,19 @@ class InvoiceService:
             message="Invoice uploaded and data extracted successfully.",
         )
 
-    async def get_invoice(self, invoice_id: int):
+    async def get_invoice(self, invoice_id: int) -> InvoiceData:
         invoice = await self.repo.get_by_id(invoice_id)
         if not invoice:
-            raise InvoiceNotFoundError(invoice_id)
+            raise InvoiceNotFoundError(invoice_id) from None  # type: ignore
         return invoice
 
-    async def list_invoices(self, limit: int = 20, offset: int = 0):
+    async def list_invoices(
+        self, limit: int = 20, offset: int = 0
+    ) -> tuple[list[InvoiceData], int]:
         return await self.repo.get_all_paginated(limit, offset)
 
-    async def get_by_number(self, invoice_number: str):
+    async def get_by_number(self, invoice_number: str) -> InvoiceData:
         invoice = await self.repo.get_by_invoice_number(invoice_number)
         if not invoice:
-            raise InvoiceNotFoundError(invoice_number)
+            raise InvoiceNotFoundError(invoice_number) from None
         return invoice

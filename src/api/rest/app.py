@@ -1,4 +1,5 @@
 import logging
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting up Paisa Vasool Dispute Service...")
     await create_tables()
     await _seed_dispute_types()
@@ -31,7 +32,7 @@ async def lifespan(app: FastAPI):
     await close_redis()
 
 
-async def _seed_dispute_types():
+async def _seed_dispute_types() -> None:
     """Seed default dispute types if they don't exist."""
     from src.data.clients.postgres import AsyncSessionLocal
     from src.data.models.postgres.models import DisputeType
@@ -80,7 +81,7 @@ def create_app() -> FastAPI:
     app.middleware("http")(logging_middleware)
 
     # Exception handlers
-    app.add_exception_handler(PaisaVasoolException, app_exception_handler)
+    app.add_exception_handler(PaisaVasoolException, app_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, generic_exception_handler)
 
     # Routes

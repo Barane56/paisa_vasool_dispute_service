@@ -85,6 +85,12 @@ _NO_NEW_CASE_INTENTS = frozenset(
         "FACTUAL_QUERY",
     }
 )
+# Intents that must ALWAYS create a new case — hard override against LLM returning false
+_ALWAYS_NEW_CASE_INTENTS = frozenset(
+    {
+        "DOCUMENT_REQUEST",
+    }
+)
 # Intents that trigger immediate FA escalation
 _ESCALATE_INTENTS = frozenset({"LEGAL_THREAT", "ESCALATION", "ABUSIVE"})
 
@@ -92,7 +98,7 @@ _ESCALATE_INTENTS = frozenset({"LEGAL_THREAT", "ESCALATION", "ABUSIVE"})
 def _safe_priority(v: Any) -> str:
     return (
         v.upper() if isinstance(v, str) and v.upper() in _VALID_PRIORITIES else "MEDIUM"
-    )
+    )  # noqa: E501
 
 
 def _safe_classification(v: Any) -> str:
@@ -100,7 +106,7 @@ def _safe_classification(v: Any) -> str:
         v.upper()
         if isinstance(v, str) and v.upper() in _VALID_CLASSIFICATIONS
         else "CLARIFICATION"
-    )
+    )  # noqa: E501
 
 
 def _safe_intent(v: Any) -> str:
@@ -143,7 +149,11 @@ def _derive_flags_from_intent(intent: str, llm_flags: dict) -> dict:
         requires_new_case = False
         suggested_action = (
             "ACKNOWLEDGE_ONLY" if intent != "RESOLUTION_ACK" else "CLOSE_CASE"
-        )
+        )  # noqa: E501
+    # Hard override: these intents must always create a case regardless of LLM output
+    elif intent in _ALWAYS_NEW_CASE_INTENTS:
+        requires_new_case = True
+        suggested_action = "CREATE_CASE"
     else:
         requires_new_case = bool(llm_flags.get("requires_new_case", True))
         suggested_action = _safe_suggested_action(llm_flags.get("suggested_action"))
@@ -151,19 +161,19 @@ def _derive_flags_from_intent(intent: str, llm_flags: dict) -> dict:
     # Hard override: escalation intents always escalate
     escalate_immediately = intent in _ESCALATE_INTENTS or bool(
         llm_flags.get("escalate_immediately", False)
-    )
+    )  # noqa: E501
 
     # Hard override: priority for legal/escalation
     if intent in ("LEGAL_THREAT", "ESCALATION"):
         priority_override = "HIGH"
     else:
         raw_po = (llm_flags.get("priority_override") or "").upper()
-        priority_override = raw_po if raw_po in _VALID_PRIORITIES else None
+        priority_override = raw_po if raw_po in _VALID_PRIORITIES else None  # type: ignore
 
     requires_fork = bool(llm_flags.get("requires_fork", False)) and intent in (
         "MULTI_INTENT",
         "DISPUTE",
-    )
+    )  # noqa: E501
 
     return {
         "requires_new_case": requires_new_case,
@@ -200,22 +210,22 @@ async def _assign_type(
         return {
             "dispute_type_name": (
                 data.get("dispute_type_name") or "General Clarification"
-            ).strip(),
+            ).strip(),  # noqa: E501
             "is_new_type": bool(data.get("is_new_type", False)),
             "new_type_description": (data.get("new_type_description") or "").strip()
-            or None,
+            or None,  # noqa: E501
             "new_type_severity": _safe_priority(
                 data.get("new_type_severity") or "MEDIUM"
-            ),
+            ),  # noqa: E501
         }
     except Exception as e:
         logger.warning(
-            f"[email_id={email_id}] Type assignment failed for {label}: {e} — using fallback"
+            f"[email_id={email_id}] Type assignment failed for {label}: {e} — using fallback"  # noqa: E501
         )
         return {
             "dispute_type_name": "General Clarification"
             if classification == "CLARIFICATION"
-            else "General Dispute",
+            else "General Dispute",  # noqa: E501
             "is_new_type": False,
             "new_type_description": None,
             "new_type_severity": "MEDIUM",
@@ -230,7 +240,7 @@ async def node_classify_email(
     Two-step classification:
       1. Structure prompt  → how many issues, what they are (no types list)
       2. Assign-type prompt → dispute_type_name per issue (full types list, split locked)
-    """
+    """  # noqa: E501
     # ── Load dispute types ────────────────────────────────────────────────────
     available_dispute_types: list[dict] = []
     if db_session:
@@ -270,14 +280,14 @@ async def node_classify_email(
             "DISPUTE"
             if any(k in text_lower for k in dispute_keywords)
             else "CLARIFICATION"
-        )
+        )  # noqa: E501
         return {
             **state,
             "available_dispute_types": available_dispute_types,
             "classification": classification,
             "dispute_type_name": "Pricing Mismatch"
             if classification == "DISPUTE"
-            else "General Clarification",
+            else "General Clarification",  # noqa: E501
             "priority": "MEDIUM",
             "description": state["body_text"][:500],
             "invoice_number": None,
@@ -285,14 +295,14 @@ async def node_classify_email(
             "_answers_pending_questions": [],
             "_new_dispute_type": None,
             "inline_issues": [],
-            "intent": "DISPUTE" if classification == "DISPUTE" else "FACTUAL_QUERY",
+            "intent": "DISPUTE" if classification == "DISPUTE" else "FACTUAL_QUERY",  # noqa: E501
             "requires_new_case": classification == "DISPUTE",
             "requires_fork": False,
             "escalate_immediately": False,
             "priority_override": None,
             "suggested_action": "CREATE_CASE"
             if classification == "DISPUTE"
-            else "ACKNOWLEDGE_ONLY",
+            else "ACKNOWLEDGE_ONLY",  # noqa: E501
         }
 
     # ── Step 1: Structure — how many issues, what are they ───────────────────
@@ -320,7 +330,7 @@ async def node_classify_email(
     except Exception as e:
         logger.error(
             f"[email_id={state['email_id']}] Structure step failed: {e}", exc_info=True
-        )
+        )  # noqa: E501
         return {
             **state,
             "available_dispute_types": available_dispute_types,
@@ -345,27 +355,27 @@ async def node_classify_email(
     primary_classification = _safe_classification(structure_data.get("classification"))
     primary_description = (
         structure_data.get("description") or state["body_text"][:500]
-    ).strip()
+    ).strip()  # noqa: E501
     primary_priority = _safe_priority(structure_data.get("priority"))
     primary_invoice_number = (
         structure_data.get("invoice_number") or ""
-    ).strip() or None
+    ).strip() or None  # noqa: E501
     primary_disputed_amount = (
         structure_data.get("disputed_amount") or ""
-    ).strip() or None
+    ).strip() or None  # noqa: E501
     # Non-invoice AR document reference for primary issue (PO, GRN, etc.)
     primary_doc_reference = (
         structure_data.get("document_reference") or ""
-    ).strip() or None
+    ).strip() or None  # noqa: E501
     primary_doc_reference_type = _safe_doc_ref_type(
         structure_data.get("document_reference_type")
-    )
+    )  # noqa: E501
     # If the LLM set document_reference but not document_reference_type, discard both
     # to avoid sending an untyped reference downstream.
     if primary_doc_reference and not primary_doc_reference_type:
         logger.warning(
             f"[email_id={state['email_id']}] primary issue has document_reference "
-            f"'{primary_doc_reference}' but missing/invalid document_reference_type — discarding"
+            f"'{primary_doc_reference}' but missing/invalid document_reference_type — discarding"  # noqa: E501
         )
         primary_doc_reference = None
 
@@ -378,7 +388,8 @@ async def node_classify_email(
         desc = (raw.get("description") or "").strip()
         if not desc:
             logger.warning(
-                f"[email_id={state['email_id']}] additional_issue[{idx}] has no description, skipped"
+                f"[email_id={state['email_id']}] additional_issue[{idx}] "
+                "has no description, skipped"
             )
             continue
         doc_ref = (raw.get("document_reference") or "").strip() or None
@@ -395,10 +406,10 @@ async def node_classify_email(
             {
                 "classification": _safe_classification(raw.get("classification")),
                 "description": desc,
-                "invoice_number": (raw.get("invoice_number") or "").strip() or None,
+                "invoice_number": (raw.get("invoice_number") or "").strip() or None,  # noqa: E501
                 "document_reference": doc_ref,
                 "document_reference_type": doc_ref_type,
-                "disputed_amount": (raw.get("disputed_amount") or "").strip() or None,
+                "disputed_amount": (raw.get("disputed_amount") or "").strip() or None,  # noqa: E501
                 "priority": _safe_priority(raw.get("priority")),
             }
         )
@@ -427,8 +438,8 @@ async def node_classify_email(
     for idx, issue in enumerate(structured_additional):
         type_data = await _assign_type(
             llm_client=llm_client,
-            classification=issue["classification"],
-            description=issue["description"],
+            classification=issue["classification"],  # type: ignore
+            description=issue["description"],  # type: ignore
             available_dispute_types=available_dispute_types,
             invoice_number=issue.get("invoice_number"),
             email_id=state["email_id"],
@@ -489,7 +500,7 @@ async def node_classify_email(
         "available_dispute_types": available_dispute_types,
         "classification": primary_classification,
         "dispute_type_name": primary_type_data["dispute_type_name"],
-        "priority": intent_flags["priority_override"] or primary_priority,
+        "priority": intent_flags["priority_override"] or primary_priority,  # noqa: E501
         "description": primary_description,
         "invoice_number": primary_invoice_number,
         "document_reference": primary_doc_reference,

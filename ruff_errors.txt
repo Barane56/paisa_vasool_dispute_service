@@ -1,0 +1,12 @@
+E402 Module level import not at top of file
+   --> src/api/rest/routes/disputes.py:635:1
+    |
+633 |   # ═══════════════════════════════════════════════════════════════════════════════
+634 |
+635 | / from pydantic import (
+636 | |     BaseModel as _BaseModel,  # local alias avoids conflict with schemas  # noqa: E402
+637 | | )
+    | |_^
+    |
+
+Found 1 error.

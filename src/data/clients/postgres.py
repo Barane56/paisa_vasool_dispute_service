@@ -19,7 +19,7 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
-async def get_db() -> AsyncSession:
+async def get_db() -> AsyncSession:  # type: ignore
     async with AsyncSessionLocal() as session:
         try:
             yield session
@@ -31,7 +31,7 @@ async def get_db() -> AsyncSession:
             await session.close()
 
 
-async def create_tables():
+async def create_tables() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

@@ -1,4 +1,4 @@
-# memory_repository.py — MemoryEpisodeRepository, MemorySummaryRepository, OpenQuestionRepository
+# memory_repository.py — MemoryEpisodeRepository, MemorySummaryRepository, OpenQuestionRepository  # noqa: E501
 
 from sqlalchemy import and_, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,7 +66,7 @@ class MemoryEpisodeRepository(BaseRepository[DisputeMemoryEpisode]):
         """
         pgvector cosine similarity search scoped to a customer.
         Threshold guide: ≥0.90 near-duplicate, ≥0.80 same topic, ≥0.75 probable match, ≥0.65 loose.
-        """
+        """  # noqa: E501
         vec_literal = "[" + ",".join(str(v) for v in query_embedding) + "]"
         sql = text("""
             SELECT e.episode_id, e.dispute_id, e.episode_type, e.actor, e.content_text, e.created_at,
@@ -78,7 +78,7 @@ class MemoryEpisodeRepository(BaseRepository[DisputeMemoryEpisode]):
               AND 1 - (e.content_embedding <=> CAST(:vec AS vector)) >= :threshold
             ORDER BY similarity DESC
             LIMIT :top_k
-        """)
+        """)  # noqa: E501
         rows = (
             (
                 await self.db.execute(
@@ -125,7 +125,7 @@ class OpenQuestionRepository(BaseRepository[DisputeOpenQuestion]):
     def __init__(self, db: AsyncSession):
         super().__init__(DisputeOpenQuestion, db)
 
-    async def get_by_id(self, question_id: int, **kwargs) -> DisputeOpenQuestion | None:
+    async def get_by_id(self, question_id: int, **kwargs) -> DisputeOpenQuestion | None:  # type: ignore
         result = await self.db.execute(
             select(DisputeOpenQuestion).where(
                 DisputeOpenQuestion.question_id == question_id

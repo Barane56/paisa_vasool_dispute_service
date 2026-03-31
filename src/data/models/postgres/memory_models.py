@@ -1,5 +1,5 @@
 # memory_models.py — DisputeMemoryEpisode, DisputeMemorySummary
-from pgvector.sqlalchemy import VECTOR
+from pgvector.sqlalchemy import VECTOR  # type: ignore
 from sqlalchemy import (
     TIMESTAMP,
     Column,
@@ -28,7 +28,7 @@ class DisputeMemoryEpisode(Base):
     episode_type = Column(String(50), nullable=False)
     actor = Column(String(50), nullable=False)
     content_text = Column(Text, nullable=False)
-    content_embedding = Column(VECTOR(768), nullable=True)
+    content_embedding: Column = Column(VECTOR(768), nullable=True)
     email_id = Column(
         Integer, ForeignKey("email_inbox.email_id", ondelete="SET NULL"), nullable=True
     )

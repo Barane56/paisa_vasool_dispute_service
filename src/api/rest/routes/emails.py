@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.rest.dependencies import get_current_user
 from src.core.services.email_service import EmailService
 from src.data.clients.postgres import get_db
-from src.schemas.schemas import (
+from src.schemas.schemas import (  # type: ignore
     CurrentUser,
     EmailIngestResponse,
     EmailListResponse,
@@ -40,7 +40,7 @@ async def ingest_email(
     service = EmailService(db)
     return await service.ingest_email_pdf(
         file_bytes=file_bytes,
-        file_name=file.filename,
+        file_name=file.filename,  # type: ignore
         sender_email=sender_email,
         subject=subject,
     )

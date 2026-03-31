@@ -30,7 +30,7 @@ def _strip_quoted_reply(text: str) -> str:
 
     # Regex that matches "On <anything> wrote:" attribution lines
     # Handles multi-line attributions too (On Mon,\nFoo <bar> wrote:)
-    attribution_re = re.compile(
+    re.compile(
         r"^On\s.{5,200}wrote\s*:\s*$",
         re.IGNORECASE | re.DOTALL,
     )

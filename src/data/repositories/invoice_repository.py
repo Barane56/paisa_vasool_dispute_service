@@ -12,7 +12,7 @@ class InvoiceRepository(BaseRepository[InvoiceData]):
     def __init__(self, db: AsyncSession):
         super().__init__(InvoiceData, db)
 
-    async def get_by_id(self, invoice_id: int, **kwargs) -> InvoiceData | None:
+    async def get_by_id(self, invoice_id: int, **kwargs) -> InvoiceData | None:  # type: ignore
         result = await self.db.execute(
             select(InvoiceData).where(InvoiceData.invoice_id == invoice_id)
         )
@@ -53,7 +53,7 @@ class PaymentRepository(BaseRepository[PaymentDetail]):
     def __init__(self, db: AsyncSession):
         super().__init__(PaymentDetail, db)
 
-    async def get_by_id(self, payment_id: int, **kwargs) -> PaymentDetail | None:
+    async def get_by_id(self, payment_id: int, **kwargs) -> PaymentDetail | None:  # type: ignore
         result = await self.db.execute(
             select(PaymentDetail).where(PaymentDetail.payment_detail_id == payment_id)
         )

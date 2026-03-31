@@ -146,7 +146,9 @@ class SupportingRefCreate(BaseModel):
     analysis_id: int
     reference_table: str = Field(
         ...,
-        description="Table name, e.g. 'payment_detail', 'invoice_data', 'email_attachments'",
+        description=(
+            "Table name, e.g. 'payment_detail', 'invoice_data', 'email_attachments'"
+        ),
     )
     ref_id_value: int = Field(..., description="Primary key value in reference_table")
     context_note: str = Field(
@@ -193,7 +195,9 @@ class FADisputeCreate(BaseModel):
     invoice_id: int | None = None
     ar_document_id: int | None = Field(
         None,
-        description="AR document (PO/GRN/Contract) to pre-link to this dispute via graph lookup.",
+        description=(
+            "AR document (PO/GRN/Contract) to pre-link to this dispute via graph lookup."  # noqa: E501
+        ),
     )
     notes: str | None = None
 

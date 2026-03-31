@@ -13,7 +13,7 @@ class EmailRepository(BaseRepository[EmailInbox]):
     def __init__(self, db: AsyncSession):
         super().__init__(EmailInbox, db)
 
-    async def get_by_id(self, email_id: int, **kwargs) -> EmailInbox | None:
+    async def get_by_id(self, email_id: int, **kwargs) -> EmailInbox | None:  # type: ignore
         stmt = (
             select(EmailInbox)
             .options(selectinload(EmailInbox.attachments))

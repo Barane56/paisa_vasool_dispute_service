@@ -6,6 +6,8 @@ AR Document Graph endpoints.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,10 +25,10 @@ router = APIRouter(prefix="/ar-documents", tags=["AR Documents"])
 
 @router.get("")
 async def list_documents_for_customer(
-    customer_email: str = None,
+    customer_email: str | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
-):
+) -> list[Any]:
     """
     List all AR documents for a given customer scope.
     Returns ARDocSummary objects (no keys/related) for fast picker UI.
@@ -50,7 +52,7 @@ async def upload_document(
     doc_date: str | None = Form(None),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
-):
+) -> Any:
     """Upload an AR document (PO, Invoice, GRN, Payment, Contract, Credit Note)."""
     try:
         svc = ARDocumentService(db)
@@ -64,7 +66,7 @@ async def upload_document(
         )
         return result
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))  # noqa: B904
 
 
 @router.get("/{doc_id}")
@@ -72,7 +74,7 @@ async def get_document(
     doc_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
-):
+) -> Any:
     svc = ARDocumentService(db)
     result = await svc.get_document(doc_id)
     if not result:
@@ -86,7 +88,7 @@ async def download_ar_document(
     mode: str = "view",  # "view" | "save"
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
-):
+) -> Any:
     """
     Serve the raw file for an AR document.
 
@@ -110,7 +112,7 @@ async def download_ar_document(
     try:
         signed_url = await svc.get_signed_url_if_gcs(doc_id, expiry_minutes=30)
     except ValueError:
-        raise HTTPException(status_code=404, detail=f"AR document {doc_id} not found")
+        raise HTTPException(status_code=404, detail=f"AR document {doc_id} not found")  # noqa: B904
 
     if signed_url:
         # GCS + ADC available: redirect, browser fetches directly from GCS
@@ -120,9 +122,9 @@ async def download_ar_document(
     try:
         file_bytes, filename = await svc.get_file_bytes(doc_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail=f"AR document {doc_id} not found")
+        raise HTTPException(status_code=404, detail=f"AR document {doc_id} not found")  # noqa: B904
     except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))  # noqa: B904
 
     media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     disposition = "inline" if mode == "view" else "attachment"
@@ -139,7 +141,7 @@ async def get_related_documents(
     doc_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
-):
+) -> list[Any]:
     """Return all documents connected to this one via shared reference keys."""
     svc = ARDocumentService(db)
     return await svc.get_related(doc_id)
@@ -156,7 +158,7 @@ async def add_manual_key(
     body: ManualKeyRequest,
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
-):
+) -> Any:
     """FA manually adds or corrects a reference key on a document."""
     valid_types = {
         "po_number",

@@ -105,7 +105,9 @@ def process_email_task(
 
                 async with AsyncSessionLocal() as session:
                     await EmailRepository(session).update_status(
-                        email_id, "FAILED", str(exc)
+                        email_id,
+                        "FAILED",
+                        str(exc),  # noqa: F821
                     )
                     await session.commit()
 
@@ -129,7 +131,7 @@ def process_email_task(
 )
 def process_live_email_task(self, message_id, existing_dispute_id=None):
     logger.info(
-        f"[Task] process_live_email_task message_id={message_id} existing_dispute_id={existing_dispute_id}"
+        f"[Task] process_live_email_task message_id={message_id} existing_dispute_id={existing_dispute_id}"  # noqa: E501
     )
 
     async def _run():
@@ -161,7 +163,7 @@ def process_live_email_task(self, message_id, existing_dispute_id=None):
             if not claimed.fetchone():
                 # Another worker already claimed or completed this message
                 logger.info(
-                    f"[email_id={message_id}] Already claimed by another worker — skipping"
+                    f"[email_id={message_id}] Already claimed by another worker — skipping"  # noqa: E501
                 )
                 return
             await claim_session.commit()
@@ -264,7 +266,9 @@ def process_live_email_task(self, message_id, existing_dispute_id=None):
 
                 async with AsyncSessionLocal() as session:
                     await EmailInboxMessageRepository(session).update_status(
-                        message_id, "FAILED", str(exc)
+                        message_id,
+                        "FAILED",
+                        str(exc),  # noqa: F821
                     )
                     await session.commit()
 
@@ -285,7 +289,7 @@ def process_live_email_task(self, message_id, existing_dispute_id=None):
     max_retries=2,
     default_retry_delay=60,
     queue="mailbox_polling",
-    expires=55,  # discard if sitting in queue longer than 55s (just under poll interval)
+    expires=55,  # discard if sitting in queue longer than 55s (just under poll interval)  # noqa: E501
 )
 def fetch_mailbox_emails_task(self, mailbox_id):
     logger.info(f"[Task] fetch_mailbox_emails_task mailbox_id={mailbox_id}")
@@ -386,7 +390,7 @@ def fetch_mailbox_emails_task(self, mailbox_id):
                         if row:
                             resolved_dispute_id = row[0]
                             logger.info(
-                                f"[Task] Matched via thread headers → dispute_id={resolved_dispute_id}"
+                                f"[Task] Matched via thread headers → dispute_id={resolved_dispute_id}"  # noqa: E501
                             )
 
                 # Layer 2: DISP-XXXXX token in body
@@ -397,7 +401,7 @@ def fetch_mailbox_emails_task(self, mailbox_id):
                         if dispute:
                             resolved_dispute_id = dispute.dispute_id
                             logger.info(
-                                f"[Task] Matched via DISP token {dispute_token} → dispute_id={resolved_dispute_id}"
+                                f"[Task] Matched via DISP token {dispute_token} → dispute_id={resolved_dispute_id}"  # noqa: E501
                             )
 
                 msg = EmailInboxMessage(
@@ -461,7 +465,7 @@ def fetch_mailbox_emails_task(self, mailbox_id):
             f"[Task] fetch_mailbox_emails_task failed mailbox_id={mailbox_id}: {exc}",
             exc_info=True,
         )
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc)  # noqa: B904
 
 
 # ---------------------------------------------------------------------------
@@ -484,7 +488,7 @@ def link_reply_to_dispute_task(self, message_id: int, dispute_id: int):
     Create a memory episode so it appears on the timeline.
     """
     logger.info(
-        f"[Task] link_reply_to_dispute_task message_id={message_id} dispute_id={dispute_id}"
+        f"[Task] link_reply_to_dispute_task message_id={message_id} dispute_id={dispute_id}"  # noqa: E501
     )
 
     async def _run():
@@ -499,7 +503,7 @@ def link_reply_to_dispute_task(self, message_id: int, dispute_id: int):
                 return
 
             # Guard: skip if an episode already exists for this exact email_id + dispute
-            # Prevents duplicate episodes if this task is queued twice for the same message
+            # Prevents duplicate episodes if this task is queued twice for the same message  # noqa: E501
             from sqlalchemy import select as sa_select
 
             existing_ep = await session.execute(
@@ -513,7 +517,7 @@ def link_reply_to_dispute_task(self, message_id: int, dispute_id: int):
             )
             if existing_ep.fetchone():
                 logger.info(
-                    f"[Task] Episode already exists for message_id={message_id} — skipping duplicate"
+                    f"[Task] Episode already exists for message_id={message_id} — skipping duplicate"  # noqa: E501
                 )
                 return
 
@@ -521,7 +525,7 @@ def link_reply_to_dispute_task(self, message_id: int, dispute_id: int):
                 dispute_id=dispute_id,
                 episode_type="CUSTOMER_REPLY",
                 actor="CUSTOMER",
-                content_text=f"[Follow-up email]\nFrom: {msg.sender_email}\nSubject: {msg.subject}\n\n{msg.body_text[:2000]}",
+                content_text=f"[Follow-up email]\nFrom: {msg.sender_email}\nSubject: {msg.subject}\n\n{msg.body_text[:2000]}",  # noqa: E501
                 email_id=msg.email_inbox_id,
             )
             session.add(episode)
@@ -544,7 +548,7 @@ def link_reply_to_dispute_task(self, message_id: int, dispute_id: int):
         _run_async(_run())
     except Exception as exc:
         logger.error(f"[Task] link_reply_to_dispute_task failed: {exc}", exc_info=True)
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc)  # noqa: B904
 
 
 # ---------------------------------------------------------------------------
@@ -638,7 +642,7 @@ def summarize_episodes_task(self, dispute_id):
         logger.error(
             f"[Task] Summarization failed dispute_id={dispute_id}: {exc}", exc_info=True
         )
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc)  # noqa: B904
     finally:
         _flush_langfuse()
 
@@ -677,7 +681,7 @@ def recover_stuck_emails_task():
         from src.data.clients.postgres import AsyncSessionLocal
         from src.data.models.postgres.mailbox_models import EmailInboxMessage
 
-        # Pick up emails stuck in RECEIVED (> 2 min) or PROCESSING (> 10 min — worker killed)
+        # Pick up emails stuck in RECEIVED (> 2 min) or PROCESSING (> 10 min — worker killed)  # noqa: E501
         now = datetime.now(UTC)
         received_cutoff = now - timedelta(minutes=2)
         processing_cutoff = now - timedelta(minutes=10)
@@ -734,12 +738,12 @@ def recover_stuck_emails_task():
                 if row.dispute_id:
                     link_reply_to_dispute_task.delay(row.message_id, row.dispute_id)
                     logger.info(
-                        f"[Recovery] Re-queued link_reply message_id={row.message_id} dispute_id={row.dispute_id}"
+                        f"[Recovery] Re-queued link_reply message_id={row.message_id} dispute_id={row.dispute_id}"  # noqa: E501
                     )
                 else:
                     process_live_email_task.delay(row.message_id)
                     logger.info(
-                        f"[Recovery] Re-queued process_live_email message_id={row.message_id}"
+                        f"[Recovery] Re-queued process_live_email message_id={row.message_id}"  # noqa: E501
                     )
 
             return len(claimed_rows)

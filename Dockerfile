@@ -1,5 +1,11 @@
 FROM python:3.13-slim-bookworm
 
+# ── Environment & Optimization ───────────────────────────────────────────────
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PYTHONUNBUFFERED=1 \
+    FASTEMBED_CACHE_PATH=/app/.fastembed_cache
+
 WORKDIR /app
 
 # ── System deps ───────────────────────────────────────────────────────────────
@@ -8,38 +14,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Python deps ───────────────────────────────────────────────────────────────
-COPY requirements/requirements.txt requirements/requirements.txt
-RUN pip install --no-cache-dir -r requirements/requirements.txt
+# ── Dependency management (uv) ───────────────────────────────────────────────
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Install dependencies before copying source for better caching
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --no-dev
 
 # ── Pre-download BAAI embedding model at build time ───────────────────────────
-# fastembed downloads ONNX model files into FASTEMBED_CACHE_PATH.
-# Doing this during docker build bakes the model (~140 MB for bge-base-en-v1.5)
-# into the image layer — zero download time at container startup.
-#
-# The cache path is set explicitly so it's predictable and consistent between
-# build and runtime. The same env var is passed at runtime (see CMD / compose).
-#
-# To swap models later: change the model name here AND in settings.py.
-ENV FASTEMBED_CACHE_PATH=/app/.fastembed_cache
-
-RUN python - <<'PYEOF'
+RUN uv run python - <<'PYEOF'
 from fastembed import TextEmbedding
 import os
 
 model_name = os.environ.get("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
 print(f"Pre-downloading embedding model: {model_name}")
-# Instantiating TextEmbedding triggers the download + ONNX conversion
 model = TextEmbedding(model_name=model_name)
-# Run one dummy embed to force full initialisation and verify the model works
 list(model.embed(["warmup"]))
 print(f"Model ready at: {os.environ['FASTEMBED_CACHE_PATH']}")
 PYEOF
 
-# ── App source ────────────────────────────────────────────────────────────────
+# ── App source & Permissions ──────────────────────────────────────────────────
 COPY . .
 
+# Create non-root user and set permissions
+RUN groupadd -r appgroup && useradd -r -g appgroup -u 1000 appuser \
+    && chown -R appuser:appgroup /app
+
+USER appuser
+
 # ── Runtime ───────────────────────────────────────────────────────────────────
-# FASTEMBED_CACHE_PATH must match the build-time path so the pre-downloaded
-# model is found instead of re-downloaded.
+ENV PATH="/app/.venv/bin:$PATH"
 CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8002"]

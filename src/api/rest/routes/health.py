@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from src.config.settings import settings
-from src.schemas.schemas import HealthResponse
+from src.schemas.schemas import HealthResponse  # type: ignore
 
 router = APIRouter(tags=["Health"])
 

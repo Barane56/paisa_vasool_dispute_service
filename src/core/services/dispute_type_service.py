@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.exceptions import AlreadyExistsError, DisputeTypeNotFoundError
 from src.data.models.postgres.models import DisputeType
 from src.data.repositories.repositories import DisputeTypeRepository
-from src.schemas.schemas import DisputeTypeCreate
+from src.schemas.schemas import DisputeTypeCreate  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +15,10 @@ class DisputeTypeService:
         self.repo = DisputeTypeRepository(db)
         self.db = db
 
-    async def list_active(self):
+    async def list_active(self) -> list[DisputeType]:
         return await self.repo.get_active_types()
 
-    async def get_by_id(self, type_id: int):
+    async def get_by_id(self, type_id: int) -> DisputeType:
         dtype = await self.repo.get_by_id(type_id)
         if not dtype:
             raise DisputeTypeNotFoundError(type_id)
@@ -36,6 +36,6 @@ class DisputeTypeService:
 
     async def deactivate(self, type_id: int) -> DisputeType:
         dtype = await self.get_by_id(type_id)
-        dtype.is_active = False
+        dtype.is_active = False  # type: ignore
         await self.db.commit()
         return dtype

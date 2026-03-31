@@ -20,7 +20,7 @@ import logging
 import sys
 from pathlib import Path
 
-import asyncpg
+import asyncpg  # type: ignore
 
 from src.config.settings import get_settings
 
@@ -41,7 +41,7 @@ def _get_sql_files() -> list[Path]:
 
 
 def _version_from_path(path: Path) -> str:
-    """Extract version key from filename e.g. '0001_initial_schema' from '0001_initial_schema.sql'."""
+    """Extract version key from filename e.g. '0001_initial_schema' from '0001_initial_schema.sql'."""  # noqa: E501
     return path.stem
 
 
@@ -151,14 +151,14 @@ async def run_applied() -> None:
     try:
         await _bootstrap(conn)
         rows = await conn.fetch(
-            "SELECT version, description, applied_at FROM schema_migrations ORDER BY version"
+            "SELECT version, description, applied_at FROM schema_migrations ORDER BY version"  # noqa: E501
         )
         print("\n── Applied Migrations ────────────────────────────")
         if not rows:
             print("  None yet.")
         for row in rows:
             print(
-                f"  {row['version']}  |  {row['applied_at'].strftime('%Y-%m-%d %H:%M:%S')}  |  {row['description']}"
+                f"  {row['version']}  |  {row['applied_at'].strftime('%Y-%m-%d %H:%M:%S')}  |  {row['description']}"  # noqa: E501
             )
         print()
     finally:

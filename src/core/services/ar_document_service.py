@@ -167,12 +167,12 @@ class ARDocumentService:
             customer_scope, doc_type, parsed_date, file_path, raw_text, uploaded_by
         )
         extracted = await extract_document_keys(raw_text, doc_type)
-        keys = await self.repo.upsert_keys(doc.doc_id, extracted)
+        keys = await self.repo.upsert_keys(doc.doc_id, extracted)  # type: ignore
         logger.info(
             f"[ar_upload] doc_id={doc.doc_id} keys={[k.key_type for k in keys]}"
         )
         await self.db.commit()
-        related = await self.repo.get_related_documents(doc.doc_id, customer_scope)
+        related = await self.repo.get_related_documents(doc.doc_id, customer_scope)  # type: ignore
         return self._fmt_response(doc, keys, related)
 
     async def get_file_bytes(self, doc_id: int) -> tuple[bytes, str]:
@@ -181,7 +181,7 @@ class ARDocumentService:
         Returns (bytes, safe_filename).
         Raises ValueError if the document does not exist.
         Raises FileNotFoundError if the file cannot be retrieved from storage.
-        """
+        """  # noqa: E501
         doc = await self.repo.get_by_id(doc_id)
         if not doc:
             raise ValueError(f"AR document {doc_id} not found")
@@ -209,7 +209,7 @@ class ARDocumentService:
                 ) from exc
 
         if file_path.startswith(LOCAL_PREFIX):
-            abs_path = _local_full_path(file_path)
+            abs_path = _local_full_path(file_path)  # type: ignore
             if not abs_path.exists():
                 raise FileNotFoundError(f"Local file not found on disk: {abs_path}")
             data = abs_path.read_bytes()
@@ -249,7 +249,7 @@ class ARDocumentService:
         doc = await self.repo.get_by_id(doc_id)
         if not doc:
             return None
-        related = await self.repo.get_related_documents(doc.doc_id, doc.customer_scope)
+        related = await self.repo.get_related_documents(doc.doc_id, doc.customer_scope)  # type: ignore
         return self._fmt_response(doc, list(doc.keys), related)
 
     async def get_related(self, doc_id: int) -> list[dict]:
@@ -259,7 +259,8 @@ class ARDocumentService:
         return [
             self._fmt_related(r)
             for r in await self.repo.get_related_documents(
-                doc.doc_id, doc.customer_scope
+                int(doc.doc_id),  # type: ignore
+                doc.customer_scope,  # type: ignore
             )
         ]
 
@@ -422,7 +423,7 @@ class ARDocumentService:
         # to the customer being disputed, not the doc's stored scope (they should
         # match but this is a safety guard).
         effective_scope = customer_scope or doc.customer_scope
-        related = await self.repo.get_related_documents(doc.doc_id, effective_scope)
+        related = await self.repo.get_related_documents(doc.doc_id, effective_scope)  # type: ignore
         # Also include the anchor doc itself as the first item in the chain
         anchor = self._fmt_related({"document": doc, "shared_keys": []})
         return [anchor] + [self._fmt_related(r) for r in related]
@@ -525,7 +526,7 @@ class ARDocumentService:
           3. Walk the graph from new_doc_id to get the full chain.
           4. Write new dispute_ar_documents rows for each doc in the chain.
           5. Return the new linked doc list (same shape as get_ar_documents_for_dispute).
-        """
+        """  # noqa: E501
         from sqlalchemy import delete as sa_delete
         from sqlalchemy import select
 
@@ -643,8 +644,8 @@ class ARDocumentService:
 
         # Live graph walk from anchor — always up to date
         chain = await self.get_document_chain_for_doc_id(
-            doc_id=anchor_doc_id,
-            customer_scope=anchor_doc.customer_scope,
+            doc_id=anchor_doc_id,  # type: ignore
+            customer_scope=anchor_doc.customer_scope,  # type: ignore
         )
 
         # get_document_chain_for_doc_id already includes the anchor at position 0

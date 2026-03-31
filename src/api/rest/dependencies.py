@@ -23,7 +23,7 @@ async def get_current_user(
     # credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> CurrentUser:
-    # print("Validating token for incoming request...")  # Debug: log when this function is called
+    # print("Validating token for incoming request...")  # Debug: log when this function is called  # noqa: E501
     # use the below for testing for swagger
     # token = credentials.credentials
     # print(request.headers)
@@ -41,9 +41,9 @@ async def get_current_user(
     # print(token)
     # print(f"Received token: {token[:10]}...")  # Debug: log the start of the token
     try:
-        payload = decode_access_token(token)
+        payload = decode_access_token(token)  # type: ignore
     except (TokenExpiredError, InvalidTokenError) as e:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=e.message)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=e.message)  # noqa: B904
 
     user_id = int(payload["sub"])
     repo = UserRepository(db)

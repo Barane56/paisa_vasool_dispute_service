@@ -22,7 +22,7 @@ def build_classify_prompt(
     types_block = (
         "\n".join(
             [
-                f"- {dt['reason_name']}: {dt.get('description', '')} (severity: {dt.get('severity_level', 'MEDIUM')})"
+                f"- {dt['reason_name']}: {dt.get('description', '')} (severity: {dt.get('severity_level', 'MEDIUM')})"  # noqa: E501
                 for dt in available_dispute_types
             ]
         )

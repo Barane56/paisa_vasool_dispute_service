@@ -113,7 +113,7 @@ async def node_detect_context_shift(
     requires_fork = state.get("requires_fork", True)
 
     # Intents that are never forks — no billing content means nothing to split
-    _NON_FORK_INTENTS = frozenset(
+    _NON_FORK_INTENTS = frozenset(  # noqa: N806
         {
             "SOCIAL",
             "IRRELEVANT",
@@ -161,7 +161,7 @@ async def node_detect_context_shift(
         try:
             from src.data.repositories.repositories import DisputeRepository
 
-            dispute = await DisputeRepository(db_session).get_by_id(existing_id)
+            dispute = await DisputeRepository(db_session).get_by_id(existing_id)  # type: ignore
             if dispute:
                 existing_invoice_number = (
                     dispute.invoice.invoice_number if dispute.invoice else None
@@ -171,8 +171,8 @@ async def node_detect_context_shift(
                     if dispute.dispute_type
                     else existing_dispute_type
                 )
-                existing_description = dispute.description or ""
-                existing_status = dispute.status or "OPEN"
+                existing_description = dispute.description or ""  # type: ignore
+                existing_status = dispute.status or "OPEN"  # type: ignore
         except Exception as db_err:
             logger.warning(
                 f"[email_id={email_id}] detect_context_shift: could not load dispute "
@@ -182,7 +182,7 @@ async def node_detect_context_shift(
     # ── No LLM available → pass through ──────────────────────────────────────
     if not llm_client:
         logger.warning(
-            f"[email_id={email_id}] detect_context_shift: no llm_client, skipping detection"
+            f"[email_id={email_id}] detect_context_shift: no llm_client, skipping detection"  # noqa: E501
         )
         langfuse_context.update_current_observation(
             output={"skipped": True, "reason": "no llm_client"}
@@ -208,7 +208,7 @@ async def node_detect_context_shift(
         subject=state["subject"],
         sender_email=state["sender_email"],
         body_text=state["body_text"],
-        existing_dispute_id=existing_id,
+        existing_dispute_id=existing_id,  # type: ignore
         existing_invoice_number=existing_invoice_number,
         existing_dispute_type=existing_dispute_type,
         existing_description=existing_description,
@@ -291,7 +291,7 @@ async def node_detect_context_shift(
         issue = _normalise_issue(raw_issue)
         if issue is None:
             logger.warning(
-                f"[email_id={email_id}] detect_context_shift: issue[{idx}] is malformed "
+                f"[email_id={email_id}] detect_context_shift: issue[{idx}] is malformed "  # noqa: E501
                 f"and will be skipped: {raw_issue!r}"
             )
             continue

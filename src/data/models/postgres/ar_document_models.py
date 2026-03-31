@@ -19,7 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import ENUM as PgEnum
+from sqlalchemy.dialects.postgresql import ENUM as PgEnum  # noqa: N811
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -44,7 +44,7 @@ class ARDocument(Base):
 
     doc_id = Column(Integer, primary_key=True)
     customer_scope = Column(String(255), nullable=False)
-    doc_type = Column(
+    doc_type = Column(  # type: ignore
         _AR_DOC_TYPE, nullable=False
     )  # PO|INVOICE|GRN|PAYMENT|CONTRACT|CREDIT_NOTE
     doc_date = Column(Date, nullable=True)
@@ -111,7 +111,7 @@ class DisputeARDocument(Base):
     Populated by the email pipeline (via ar_document_chain) and manual FA case creation.
     This is what the 'Docs' tab queries — only shows docs relevant to this specific dispute,
     not all documents for the customer.
-    """
+    """  # noqa: E501
 
     __tablename__ = "dispute_ar_documents"
 

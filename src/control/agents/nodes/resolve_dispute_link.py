@@ -21,7 +21,7 @@ async def node_resolve_dispute_link(
     Scenario A — Invoice matched → pass through, context already correct.
     Scenario B — No invoice but embedding matched → reload memory from matched dispute.
     Scenario C — No invoice, no match → set _needs_invoice_details=True but still create dispute + assign FA.
-    """
+    """  # noqa: E501
     # ── Scenario T (Token already matched upstream) ───────────────────────────
     if state.get("token_matched_dispute_id"):
         logger.info(
@@ -67,7 +67,7 @@ async def node_resolve_dispute_link(
             )
 
             ep_repo = MemoryEpisodeRepository(db_session)
-            recent_eps = await ep_repo.get_latest_n(linked_id, n=5)
+            recent_eps = await ep_repo.get_latest_n(linked_id, n=5)  # type: ignore
             recent_episodes = [
                 {
                     "actor": ep.actor,
@@ -77,13 +77,13 @@ async def node_resolve_dispute_link(
                 for ep in recent_eps
             ]
             sum_repo = MemorySummaryRepository(db_session)
-            summary_obj = await sum_repo.get_for_dispute(linked_id)
+            summary_obj = await sum_repo.get_for_dispute(linked_id)  # type: ignore
             memory_summary = (
                 summary_obj.summary_text if summary_obj else state.get("memory_summary")
             )
 
             q_repo = OpenQuestionRepository(db_session)
-            pending_qs = await q_repo.get_pending_for_dispute(linked_id)
+            pending_qs = await q_repo.get_pending_for_dispute(linked_id)  # type: ignore
             pending_questions = [
                 {"question_id": q.question_id, "text": q.question_text}
                 for q in pending_qs
@@ -92,7 +92,7 @@ async def node_resolve_dispute_link(
                 **state,
                 "existing_dispute_id": linked_id,
                 "recent_episodes": recent_episodes,
-                "memory_summary": memory_summary,
+                "memory_summary": memory_summary,  # type: ignore
                 "pending_questions": pending_questions,
                 "_needs_invoice_details": False,
             }

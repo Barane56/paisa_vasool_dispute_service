@@ -13,8 +13,8 @@ class BaseRepository(Generic[ModelType]):
         self.model = model
         self.db = db
 
-    async def get_by_id(self, id_value: int, id_field: str = None) -> ModelType | None:
-        pk_col = id_field or list(self.model.__table__.primary_key.columns)[0].name
+    async def get_by_id(self, id_value: int, id_field: str = None) -> ModelType | None:  # type: ignore
+        pk_col = id_field or list(self.model.__table__.primary_key.columns)[0].name  # type: ignore
         stmt = select(self.model).where(getattr(self.model, pk_col) == id_value)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()

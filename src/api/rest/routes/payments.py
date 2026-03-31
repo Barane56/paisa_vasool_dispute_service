@@ -5,7 +5,7 @@ from src.api.rest.dependencies import get_current_user
 from src.core.exceptions import PaymentNotFoundError
 from src.data.clients.postgres import get_db
 from src.data.repositories.repositories import PaymentRepository
-from src.schemas.schemas import (
+from src.schemas.schemas import (  # type: ignore
     CurrentUser,
     CustomerPaymentListResponse,
     PaymentDetailListResponse,

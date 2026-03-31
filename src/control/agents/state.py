@@ -7,7 +7,7 @@ Imported by every node and by the graph builder.
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Any, TypedDict
 
 
 class EmailProcessingState(TypedDict):
@@ -19,18 +19,18 @@ class EmailProcessingState(TypedDict):
     attachment_texts: list[str]
     # Rich attachment metadata for multi-file prompt context
     # Each item: {file_name, file_type, extracted_text}
-    attachment_metadata: list[dict]
+    attachment_metadata: list[dict[str, Any]]
 
     # ── Text ──────────────────────────────────────────────────────────────────
     all_text: str
 
     # ── Groq-extracted invoice fields ─────────────────────────────────────────
-    groq_extracted: dict | None
+    groq_extracted: dict[str, Any] | None
     candidate_invoice_numbers: list[str]
     # Non-invoice AR reference numbers extracted from the email.
     # Each entry: {"value": "PO-BK-2025-001", "key_type": "po_number"}
     # Used by fetch_context as a fallback graph-walk trigger when no invoice matched.
-    candidate_references: list[dict]
+    candidate_references: list[dict[str, Any]]
 
     # ── DB-matched invoice + payments ─────────────────────────────────────────
     matched_invoice_id: int | None
@@ -68,27 +68,21 @@ class EmailProcessingState(TypedDict):
     priority_override: str | None  # force HIGH/MEDIUM/LOW
     suggested_action: str  # CLOSE_CASE | UPDATE_CASE | CREATE_CASE | ACKNOWLEDGE_ONLY
 
-    # Additional issues found in the SAME email — each becomes its own dispute.
-    # Shape per item: {classification, dispute_type_name, is_new_type,
-    #   new_type_description, new_type_severity, priority, description,
-    #   invoice_number, disputed_amount,
-    #   document_reference, document_reference_type}
-    # document_reference / document_reference_type carry non-invoice AR refs
     # (PO number, GRN number, payment ref, contract number) for issues where
     # no invoice number was stated — used for AR graph lookup in generate_response.
-    inline_issues: list[dict]
+    inline_issues: list[dict[str, Any]]
 
     # ── Context (fetched AFTER classification) ────────────────────────────────
-    invoice_details: dict | None
-    all_payment_details: list[dict]
+    invoice_details: dict[str, Any] | None
+    all_payment_details: list[dict[str, Any]]
     existing_dispute_id: int | None
     memory_summary: str | None
-    recent_episodes: list[dict]
-    pending_questions: list[dict]
-    available_dispute_types: list[dict]
+    recent_episodes: list[dict[str, Any]]
+    pending_questions: list[dict[str, Any]]
+    available_dispute_types: list[dict[str, Any]]
 
     # ── Embedding search ──────────────────────────────────────────────────────
-    similar_episodes: list[dict]
+    similar_episodes: list[dict[str, Any]]
     embedding_matched: bool
     embedding_dispute_id: int | None
     embedding_similarity: float
@@ -106,7 +100,7 @@ class EmailProcessingState(TypedDict):
     # Shape: {dispute_id, dispute_type, description, status, invoice_number}
     # Contract: always a Dict (never None). Empty dict {} = no prior dispute
     # found or fetch failed. All reads should use .get() for safety.
-    existing_dispute_context: dict  # {} means "not populated"
+    existing_dispute_context: dict[str, Any]  # {} means "not populated"
 
     # ── Related dispute (L2 soft match — same invoice, different issue) ───────
     # Set when L2 Gate A passes but Gate B similarity is below threshold.
@@ -131,15 +125,16 @@ class EmailProcessingState(TypedDict):
     memory_context_used: bool
     episodes_referenced: list[int]
 
-    # Per-issue responses for multi-issue emails.
-    # Each entry shape:
     #   issue_index, invoice_number, classification, description,
     #   ai_response, can_auto_respond, ai_summary, confidence_score,
     #   questions_to_ask, dispute_token (placeholder resolved by persist_results)
-    per_issue_responses: list[dict]
+    per_issue_responses: list[dict[str, Any]]
 
-    # ── AR Document graph chain ───────────────────────────────────────────────
-    ar_document_chain: list[dict]  # related AR docs found via graph — injected into LLM
+    # Related issue field added to IssueState in LangGraph repo.
+    # related_issue_id: int | None
+    ar_document_chain: list[
+        dict[str, Any]
+    ]  # related AR docs found via graph — injected into LLM
 
     # ── Final ─────────────────────────────────────────────────────────────────
     dispute_id: int | None  # primary dispute id for this email
