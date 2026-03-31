@@ -1,7 +1,0 @@
-src/control/prompts/assign_dispute_type.py:23: error: Name "Any" is not defined  [name-defined]
-src/control/prompts/assign_dispute_type.py:23: note: Did you forget to import it from "typing"? (Suggestion: "from typing import Any")
-src/data/clients/redis_client.py:11: error: Name "aioredis" is not defined  [name-defined]
-src/core/services/dispute_document_service.py:179: error: Missing positional argument "identifier" in call to "ResourceNotFoundError"  [call-arg]
-src/observability/__init__.py:52: error: Name "langfuse_context" already defined (possibly by an import)  [no-redef]
-src/control/tasks.py:364: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
-Found 4 errors in 4 files (checked 111 source files)
