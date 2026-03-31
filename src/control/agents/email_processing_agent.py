@@ -23,7 +23,7 @@ continue to work unchanged.
 """
 
 from src.control.agents.graph import (  # noqa: F401
-    run_email_processing,
     build_email_processing_graph,
+    run_email_processing,
 )
 from src.control.agents.state import EmailProcessingState  # noqa: F401

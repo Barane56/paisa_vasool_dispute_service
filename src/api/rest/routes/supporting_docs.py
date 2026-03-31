@@ -12,26 +12,26 @@ Table schema reminder:
         reference_table TEXT   (e.g. 'payment_detail', 'invoice_data', 'email_attachments')
         ref_id_value    INT    (PK of the referenced row)
         context_note    TEXT   (why this document is relevant)
-"""
+"""  # noqa: E501
+
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
 
+from src.api.rest.dependencies import get_current_user
+from src.core.exceptions import AnalysisNotFoundError, DisputeNotFoundError
 from src.data.clients.postgres import get_db
 from src.data.repositories.repositories import (
     AnalysisSupportingRefRepository,
     DisputeAIAnalysisRepository,
     DisputeRepository,
 )
-from src.api.rest.dependencies import get_current_user
-from src.schemas.schemas import (
+from src.schemas.schemas import (  # type: ignore
     CurrentUser,
-    SupportingRefCreate,
-    SupportingRefResponse,
-    SupportingRefListResponse,
     SuccessResponse,
+    SupportingRefCreate,
+    SupportingRefListResponse,
+    SupportingRefResponse,
 )
-from src.core.exceptions import DisputeNotFoundError, AnalysisNotFoundError
 
 router = APIRouter(prefix="/disputes", tags=["Supporting Documents"])
 
@@ -44,7 +44,7 @@ async def list_supporting_docs(
 ):
     """
     Return all supporting document references attached to any analysis of the given dispute.
-    """
+    """  # noqa: E501
     dispute_repo = DisputeRepository(db)
     dispute = await dispute_repo.get_by_id(dispute_id)
     if not dispute:
@@ -130,7 +130,10 @@ async def remove_supporting_doc(
     deleted = await ref_repo.delete_ref(ref_id)
     if not deleted:
         from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail=f"Supporting ref {ref_id} not found")
+
+        raise HTTPException(
+            status_code=404, detail=f"Supporting ref {ref_id} not found"
+        )
 
     await db.commit()
     return SuccessResponse(message=f"Supporting document ref {ref_id} removed")

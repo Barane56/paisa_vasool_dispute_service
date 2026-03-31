@@ -1,39 +1,39 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class DisputeStatus(str, Enum):
+class DisputeStatus(StrEnum):
     OPEN = "OPEN"
     UNDER_REVIEW = "UNDER_REVIEW"
     RESOLVED = "RESOLVED"
     CLOSED = "CLOSED"
 
 
-class DisputePriority(str, Enum):
+class DisputePriority(StrEnum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
 
 
-class AssignmentStatus(str, Enum):
+class AssignmentStatus(StrEnum):
     ACTIVE = "ACTIVE"
     REASSIGNED = "REASSIGNED"
     COMPLETED = "COMPLETED"
 
 
-class MatchStatus(str, Enum):
+class MatchStatus(StrEnum):
     FULL = "FULL"
     PARTIAL = "PARTIAL"
     FAILED = "FAILED"
 
 
-class ProcessingStatus(str, Enum):
+class ProcessingStatus(StrEnum):
     RECEIVED = "RECEIVED"
     PROCESSING = "PROCESSING"
     PROCESSED = "PROCESSED"
     FAILED = "FAILED"
 
 
-class EpisodeType(str, Enum):
+class EpisodeType(StrEnum):
     CUSTOMER_EMAIL = "CUSTOMER_EMAIL"
     AI_RESPONSE = "AI_RESPONSE"
     ASSOCIATE_RESPONSE = "ASSOCIATE_RESPONSE"
@@ -42,20 +42,20 @@ class EpisodeType(str, Enum):
     CLARIFICATION_ASKED = "CLARIFICATION_ASKED"
 
 
-class Actor(str, Enum):
+class Actor(StrEnum):
     CUSTOMER = "CUSTOMER"
     AI = "AI"
     ASSOCIATE = "ASSOCIATE"
     SYSTEM = "SYSTEM"
 
 
-class QuestionStatus(str, Enum):
+class QuestionStatus(StrEnum):
     PENDING = "PENDING"
     ANSWERED = "ANSWERED"
     EXPIRED = "EXPIRED"
 
 
-class EmailClassification(str, Enum):
+class EmailClassification(StrEnum):
     DISPUTE = "DISPUTE"
     CLARIFICATION = "CLARIFICATION"
     UNKNOWN = "UNKNOWN"
@@ -66,24 +66,27 @@ class TaskNames:
     SUMMARIZE_EPISODES = "src.control.tasks.summarize_episodes_task"
     MATCH_INVOICE = "src.control.tasks.match_invoice_task"
 
+
 # Add this to your enums.py file (src/constants/enums.py)
 
-from enum import Enum
+from enum import StrEnum  # noqa: E402
 
-class SeverityLevel(str, Enum):
+
+class SeverityLevel(StrEnum):
     """
     Severity levels for dispute types.
     Indicates the urgency and impact of a dispute category.
     """
+
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
 
     def __str__(self):
         return self.value
-    
+
     @classmethod
-    def from_string(cls, value: str) -> 'SeverityLevel':
+    def from_string(cls, value: str) -> "SeverityLevel":
         """
         Convert string to SeverityLevel enum.
         Case-insensitive conversion.
@@ -91,4 +94,4 @@ class SeverityLevel(str, Enum):
         try:
             return cls[value.upper()]
         except KeyError:
-            raise ValueError(f"Invalid severity level: {value}")
+            raise ValueError(f"Invalid severity level: {value}")  # noqa: B904

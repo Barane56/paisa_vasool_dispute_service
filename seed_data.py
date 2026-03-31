@@ -70,52 +70,52 @@ styles = getSampleStyleSheet()
 DISPUTE_TYPES = [
     {
         "reason_name": "Pricing Mismatch",
-        "description": "Customer claims the price charged differs from the agreed or quoted price.",
+        "description": "Customer claims the price charged differs from the agreed or quoted price.",  # noqa: E501
         "severity_level": "HIGH",
     },
     {
         "reason_name": "Short Payment",
-        "description": "Customer has paid less than the invoiced amount without prior agreement.",
+        "description": "Customer has paid less than the invoiced amount without prior agreement.",  # noqa: E501
         "severity_level": "HIGH",
     },
     {
         "reason_name": "Duplicate Invoice",
-        "description": "Customer believes they have been billed twice for the same goods or services.",
+        "description": "Customer believes they have been billed twice for the same goods or services.",  # noqa: E501
         "severity_level": "HIGH",
     },
     {
         "reason_name": "Tax Dispute",
-        "description": "Customer disputes the tax rate, tax amount, or tax exemption applied on the invoice.",
+        "description": "Customer disputes the tax rate, tax amount, or tax exemption applied on the invoice.",  # noqa: E501
         "severity_level": "MEDIUM",
     },
     {
         "reason_name": "Payment Not Reflected",
-        "description": "Customer claims payment was made but it has not been applied to the invoice on record.",
+        "description": "Customer claims payment was made but it has not been applied to the invoice on record.",  # noqa: E501
         "severity_level": "HIGH",
     },
     {
         "reason_name": "Goods Not Received",
-        "description": "Customer disputes the invoice because the goods or services were not delivered.",
+        "description": "Customer disputes the invoice because the goods or services were not delivered.",  # noqa: E501
         "severity_level": "HIGH",
     },
     {
         "reason_name": "Quality Dispute",
-        "description": "Customer received goods or services but disputes the quality or completeness of delivery.",
+        "description": "Customer received goods or services but disputes the quality or completeness of delivery.",  # noqa: E501
         "severity_level": "MEDIUM",
     },
     {
         "reason_name": "Early Payment Discount",
-        "description": "Customer claims an early payment discount was applicable but was not reflected on the invoice.",
+        "description": "Customer claims an early payment discount was applicable but was not reflected on the invoice.",  # noqa: E501
         "severity_level": "MEDIUM",
     },
     {
         "reason_name": "General Clarification",
-        "description": "General inquiries and clarification requests that do not constitute a formal dispute.",
+        "description": "General inquiries and clarification requests that do not constitute a formal dispute.",  # noqa: E501
         "severity_level": "LOW",
     },
     {
         "reason_name": "Payment Terms Dispute",
-        "description": "Customer disputes the payment due date, credit period, or agreed payment terms on the invoice.",
+        "description": "Customer disputes the payment due date, credit period, or agreed payment terms on the invoice.",  # noqa: E501
         "severity_level": "MEDIUM",
     },
 ]
@@ -168,7 +168,7 @@ INVOICES = [
             "currency": "INR",
             "payment_terms": "Net 30",
             "po_reference": "PO-BK-2025-001",
-            "notes": "Quoted price for laptop was INR 58,000 per email dated 5-Jan-2025. Invoice shows INR 62,000.",
+            "notes": "Quoted price for laptop was INR 58,000 per email dated 5-Jan-2025. Invoice shows INR 62,000.",  # noqa: E501
         },
     },
     # INV-2025-002 — Office stationery (duplicate invoice)
@@ -293,7 +293,7 @@ INVOICES = [
             "currency": "INR",
             "payment_terms": "Net 30",
             "po_reference": "PO-KCE-2025-LAB-001",
-            "delivery_note": "Partial delivery received — Raspberry Pi units not delivered as of invoice date.",
+            "delivery_note": "Partial delivery received — Raspberry Pi units not delivered as of invoice date.",  # noqa: E501
         },
     },
     # INV-2025-005 — Annual software subscription (tax dispute)
@@ -327,7 +327,7 @@ INVOICES = [
             "currency": "INR",
             "payment_terms": "Net 30",
             "po_reference": "PO-KCE-2025-SW-001",
-            "notes": "Educational institutions qualify for GST exemption on software licenses under Notification 12/2017. Tax should be 0%.",
+            "notes": "Educational institutions qualify for GST exemption on software licenses under Notification 12/2017. Tax should be 0%.",  # noqa: E501
         },
     },
     # INV-2025-006 — Canteen supplies (quality dispute + context shift — multi invoice)
@@ -407,7 +407,7 @@ INVOICES = [
             "currency": "INR",
             "payment_terms": "2/10 Net 30 (2% discount if paid within 10 days)",
             "po_reference": "PO-JD-2025-001",
-            "discount_note": "2% early payment discount = INR 2,142 applicable if paid by 15-Jan-2025.",
+            "discount_note": "2% early payment discount = INR 2,142 applicable if paid by 15-Jan-2025.",  # noqa: E501
         },
     },
     # INV-2025-008 — Electronics (damaged goods on delivery — quality dispute)
@@ -447,7 +447,7 @@ INVOICES = [
             "currency": "INR",
             "payment_terms": "Net 30",
             "po_reference": "PO-JD-2025-002",
-            "notes": "2 mixer grinders arrived with cracked lids. 1 induction cooktop with shattered glass top.",
+            "notes": "2 mixer grinders arrived with cracked lids. 1 induction cooktop with shattered glass top.",  # noqa: E501
         },
     },
     # INV-2025-009 — Tailoring services (payment terms dispute)
@@ -482,7 +482,7 @@ INVOICES = [
             "payment_terms": "Net 7",
             "agreed_payment_terms": "Net 30",
             "po_reference": "PO-JD-2025-003",
-            "notes": "Agreement email dated 10-Feb-2025 clearly states Net 30. Invoice shows Net 7 — due date wrong.",
+            "notes": "Agreement email dated 10-Feb-2025 clearly states Net 30. Invoice shows Net 7 — due date wrong.",  # noqa: E501
         },
     },
     # ── prakeshprakesh9345@gmail.com ──────────────────────────────────────────
@@ -580,7 +580,7 @@ INVOICES = [
             "currency": "INR",
             "payment_terms": "50% advance, balance on event day",
             "po_reference": "PO-PP-2025-002",
-            "notes": "LED Screen was not delivered. Catering count was 150 pax not 200. Two disputes in same email.",
+            "notes": "LED Screen was not delivered. Catering count was 150 pax not 200. Two disputes in same email.",  # noqa: E501
         },
     },
     # INV-2025-012 — Courier services (payment terms dispute + context shift email)
@@ -689,7 +689,7 @@ PAYMENTS = [
             "status": "CLEARED",
             "payment_type": "PARTIAL",
             "payment_sequence": 1,
-            "note": "Partial payment — INR 6,400 withheld. Quoted price was INR 58,000 not INR 62,000 for laptop.",
+            "note": "Partial payment — INR 6,400 withheld. Quoted price was INR 58,000 not INR 62,000 for laptop.",  # noqa: E501
         },
     },
     {
@@ -726,7 +726,7 @@ PAYMENTS = [
             "status": "CLEARED",
             "payment_type": "FULL",
             "payment_sequence": 1,
-            "note": "Paid in full. Duplicate invoice INV-2025-002-DUP received — requesting cancellation.",
+            "note": "Paid in full. Duplicate invoice INV-2025-002-DUP received — requesting cancellation.",  # noqa: E501
         },
     },
     # INV-2025-003 — payment made but not reflected
@@ -745,7 +745,7 @@ PAYMENTS = [
             "status": "PENDING",
             "payment_type": "FULL",
             "payment_sequence": 1,
-            "note": "Payment made on 20-Feb-2025. Bank confirms debit. Invoice still shows UNPAID.",
+            "note": "Payment made on 20-Feb-2025. Bank confirms debit. Invoice still shows UNPAID.",  # noqa: E501
         },
     },
     # ── 717822p107@kce.ac.in ──────────────────────────────────────────────────
@@ -765,7 +765,7 @@ PAYMENTS = [
             "status": "CLEARED",
             "payment_type": "PARTIAL",
             "payment_sequence": 1,
-            "note": "Partial payment. Raspberry Pi units (10 nos, INR 55,500) not delivered — withheld.",
+            "note": "Partial payment. Raspberry Pi units (10 nos, INR 55,500) not delivered — withheld.",  # noqa: E501
         },
     },
     {
@@ -802,7 +802,7 @@ PAYMENTS = [
             "status": "CLEARED",
             "payment_type": "FULL",
             "payment_sequence": 1,
-            "note": "Paid in full as goodwill. Requesting credit note INR 28,800 — GST exemption for education.",
+            "note": "Paid in full as goodwill. Requesting credit note INR 28,800 — GST exemption for education.",  # noqa: E501
         },
     },
     # INV-2025-006 — advance paid (quality dispute on canteen items)
@@ -821,7 +821,7 @@ PAYMENTS = [
             "status": "CLEARED",
             "payment_type": "ADVANCE",
             "payment_sequence": 1,
-            "note": "50% advance. Balance withheld — rice quality substandard, 15 bags rejected.",
+            "note": "50% advance. Balance withheld — rice quality substandard, 15 bags rejected.",  # noqa: E501
         },
     },
     # INV-2025-013 — ownership check: customer_id is kce, NOT prakesh (UNVERIFIED test)
@@ -860,7 +860,7 @@ PAYMENTS = [
             "status": "CLEARED",
             "payment_type": "FULL",
             "payment_sequence": 1,
-            "note": "Paid on 13-Jan-2025 (within 10-day window). 2% discount INR 2,142 not applied. Requesting credit note.",
+            "note": "Paid on 13-Jan-2025 (within 10-day window). 2% discount INR 2,142 not applied. Requesting credit note.",  # noqa: E501
         },
     },
     # INV-2025-008 — partial paid (damaged goods withheld)
@@ -879,7 +879,7 @@ PAYMENTS = [
             "status": "CLEARED",
             "payment_type": "PARTIAL",
             "payment_sequence": 1,
-            "note": "Balance INR 13,800 withheld. 2 mixer grinders + 1 induction cooktop damaged on delivery.",
+            "note": "Balance INR 13,800 withheld. 2 mixer grinders + 1 induction cooktop damaged on delivery.",  # noqa: E501
         },
     },
     {
@@ -916,7 +916,7 @@ PAYMENTS = [
             "status": "PENDING",
             "payment_type": "FULL",
             "payment_sequence": 1,
-            "note": "Payment withheld. Due date on invoice is wrong — agreed terms were Net 30, not Net 7.",
+            "note": "Payment withheld. Due date on invoice is wrong — agreed terms were Net 30, not Net 7.",  # noqa: E501
         },
     },
     # ── prakeshprakesh9345@gmail.com ──────────────────────────────────────────
@@ -936,7 +936,7 @@ PAYMENTS = [
             "status": "CLEARED",
             "payment_type": "PARTIAL",
             "payment_sequence": 1,
-            "note": "Partial payment. Disputing flex banner rate — quoted INR 38/sqft, billed INR 45/sqft.",
+            "note": "Partial payment. Disputing flex banner rate — quoted INR 38/sqft, billed INR 45/sqft.",  # noqa: E501
         },
     },
     {
@@ -973,7 +973,7 @@ PAYMENTS = [
             "status": "CLEARED",
             "payment_type": "ADVANCE",
             "payment_sequence": 1,
-            "note": "50% advance. LED screen not delivered. Catering 150 pax not 200. Balance disputed.",
+            "note": "50% advance. LED screen not delivered. Catering 150 pax not 200. Balance disputed.",  # noqa: E501
         },
     },
     {
@@ -991,7 +991,7 @@ PAYMENTS = [
             "status": "PENDING",
             "payment_type": "PARTIAL",
             "payment_sequence": 2,
-            "note": "Balance withheld. LED screen credit + catering count correction needed.",
+            "note": "Balance withheld. LED screen credit + catering count correction needed.",  # noqa: E501
         },
     },
     # INV-2025-012 — payment withheld (payment terms dispute)
@@ -1010,7 +1010,7 @@ PAYMENTS = [
             "status": "PENDING",
             "payment_type": "FULL",
             "payment_sequence": 1,
-            "note": "Payment withheld. Invoice says Net 7, agreement says Net 30. Disputing due date.",
+            "note": "Payment withheld. Invoice says Net 7, agreement says Net 30. Disputing due date.",  # noqa: E501
         },
     },
 ]
@@ -1328,7 +1328,7 @@ Regards,
 Prakesh
 prakeshprakesh9345@gmail.com""",
     },
-    # 13. Context shift email — starts with one issue, then raises another (INV-2025-012)
+    # 13. Context shift email — starts with one issue, then raises another (INV-2025-012)  # noqa: E501
     {
         "filename": "email_13_context_shift_prakesh.pdf",
         "sender": "prakeshprakesh9345@gmail.com",
@@ -1484,11 +1484,11 @@ def generate_email_pdf(email_data: dict, output_path: Path):
 
 async def seed_database():
     engine = create_async_engine(DATABASE_URL, echo=False)
-    AsyncSessionLocal = async_sessionmaker(
+    async_session_local = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
     )
 
-    async with AsyncSessionLocal() as session:
+    async with async_session_local() as session:
         print("\nSeeding dispute types...")
         for dt in DISPUTE_TYPES:
             result = await session.execute(
@@ -1504,7 +1504,7 @@ async def seed_database():
                 text("""
                     INSERT INTO dispute_type (reason_name, description, severity_level, is_active)
                     VALUES (:reason_name, :description, :severity_level, true)
-                """),
+                """),  # noqa: E501
                 {
                     "reason_name": dt["reason_name"],
                     "description": dt["description"],
@@ -1530,7 +1530,7 @@ async def seed_database():
                 text("""
                     INSERT INTO invoice_data (invoice_number, invoice_url, invoice_details, updated_at)
                     VALUES (:invoice_number, :invoice_url, cast(:invoice_details as jsonb), NOW())
-                """),
+                """),  # noqa: E501
                 {
                     "invoice_number": inv["invoice_number"],
                     "invoice_url": inv["invoice_url"],
@@ -1543,7 +1543,7 @@ async def seed_database():
         for pay in PAYMENTS:
             result = await session.execute(
                 text(
-                    "SELECT payment_detail_id FROM payment_detail WHERE payment_url = :url"
+                    "SELECT payment_detail_id FROM payment_detail WHERE payment_url = :url"  # noqa: E501
                 ),
                 {"url": pay["payment_url"]},
             )
@@ -1557,7 +1557,7 @@ async def seed_database():
                 text("""
                     INSERT INTO payment_detail (customer_id, invoice_number, payment_url, payment_details)
                     VALUES (:customer_id, :invoice_number, :payment_url, cast(:payment_details as jsonb))
-                """),
+                """),  # noqa: E501
                 {
                     "customer_id": pay["customer_id"],
                     "invoice_number": pay["invoice_number"],
@@ -1568,7 +1568,7 @@ async def seed_database():
             ref = pay["payment_details"].get("payment_reference", "N/A")
             ptype = pay["payment_details"].get("payment_type", "?")
             print(
-                f"  Payment {ref} [{ptype}] for {pay['invoice_number']} → {pay['customer_id']}"
+                f"  Payment {ref} [{ptype}] for {pay['invoice_number']} → {pay['customer_id']}"  # noqa: E501
             )
 
         await session.commit()
@@ -1588,10 +1588,10 @@ async def main():
     print("=" * 62)
     print("""
 Customers:
-  baranekumar56@gmail.com       — 3 invoices (pricing, duplicate, payment not reflected)
-  717822p107@kce.ac.in          — 3 invoices (goods not received, tax, quality/context shift)
-  jeevadharani9384@gmail.com    — 3 invoices (early discount, damaged goods, payment terms)
-  prakeshprakesh9345@gmail.com  — 3 invoices (short payment, multi-issue, context shift)
+  baranekumar56@gmail.com       - 3 invoices (pricing, duplicate, payment)
+  717822p107@kce.ac.in          - 3 invoices (goods, tax, quality shift)
+  jeevadharani9384@gmail.com    - 3 invoices (discount, damaged, terms)
+  prakeshprakesh9345@gmail.com  - 3 invoices (short pay, multi-issue)
 
 Special cases:
   Email 04  — No invoice (clarification flow)

@@ -3,12 +3,12 @@ src/control/agents/nodes/extract_text.py
 """
 
 from __future__ import annotations
-import re
-import logging
-from typing import List
 
-from src.observability import observe
+import logging
+import re
+
 from src.control.agents.state import EmailProcessingState
+from src.observability import observe
 
 logger = logging.getLogger(__name__)
 
@@ -25,18 +25,18 @@ def _strip_quoted_reply(text: str) -> str:
     Keeps only the new content the customer wrote in this reply.
     """
     # Split into lines for line-level processing
-    lines = text.split('\n')
+    lines = text.split("\n")
     cleaned: list[str] = []
 
     # Regex that matches "On <anything> wrote:" attribution lines
     # Handles multi-line attributions too (On Mon,\nFoo <bar> wrote:)
-    attribution_re = re.compile(
-        r'^On\s.{5,200}wrote\s*:\s*$',
+    re.compile(
+        r"^On\s.{5,200}wrote\s*:\s*$",
         re.IGNORECASE | re.DOTALL,
     )
     # Also matches single-line "On Mon, 23 Mar 2026 at 10:55 AM <x> wrote:"
     attribution_inline_re = re.compile(
-        r'^On\s.+wrote\s*:',
+        r"^On\s.+wrote\s*:",
         re.IGNORECASE,
     )
 
@@ -45,7 +45,7 @@ def _strip_quoted_reply(text: str) -> str:
         stripped = line.strip()
 
         # Standard > quoting — skip
-        if stripped.startswith('>'):
+        if stripped.startswith(">"):
             in_quote = True
             continue
 
@@ -55,8 +55,11 @@ def _strip_quoted_reply(text: str) -> str:
             continue
 
         # Standard reply separators
-        if re.match(r'^-{4,}\s*(original message|forwarded message)\s*-{4,}',
-                    stripped, re.IGNORECASE):
+        if re.match(
+            r"^-{4,}\s*(original message|forwarded message)\s*-{4,}",
+            stripped,
+            re.IGNORECASE,
+        ):
             in_quote = True
             continue
 
@@ -65,15 +68,15 @@ def _strip_quoted_reply(text: str) -> str:
             # customer may have written something after quoting.
             # We conservatively stop stripping — but only if the line looks
             # like real content (not another > line caught late).
-            if stripped and not stripped.startswith('>'):
+            if stripped and not stripped.startswith(">"):
                 in_quote = False
                 cleaned.append(line)
         else:
             cleaned.append(line)
 
-    result = '\n'.join(cleaned)
+    result = "\n".join(cleaned)
     # Collapse excessive blank lines left after stripping
-    result = re.sub(r'\n{3,}', '\n\n', result)
+    result = re.sub(r"\n{3,}", "\n\n", result)
     return result.strip()
 
 
@@ -82,7 +85,7 @@ def _build_full_text(state: EmailProcessingState) -> str:
     return "\n\n".join(filter(None, parts))
 
 
-def _regex_invoice_numbers(text: str) -> List[str]:
+def _regex_invoice_numbers(text: str) -> list[str]:
     candidates: set[str] = set()
     patterns = [
         r"(?:invoice\s*(?:no\.?|number|#|num)[:\s#-]*)([\w\-/]+)",
@@ -115,5 +118,7 @@ async def node_extract_text(state: EmailProcessingState) -> EmailProcessingState
     # Update body_text in state so downstream nodes see the clean version
     state = {**state, "body_text": clean_body}
     all_text = _build_full_text(state)
-    logger.info(f"[email_id={state['email_id']}] Extracted text ({len(all_text)} chars)")
+    logger.info(
+        f"[email_id={state['email_id']}] Extracted text ({len(all_text)} chars)"
+    )
     return {**state, "all_text": all_text}

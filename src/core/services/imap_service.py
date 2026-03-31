@@ -8,6 +8,7 @@ Handles all IMAP interaction:
   - Storing attachments to the local filesystem
   - Extracting text from various file types (pdf, csv, xlsx, images, etc.)
 """
+
 from __future__ import annotations
 
 import base64
@@ -15,24 +16,26 @@ import email
 import imaplib
 import logging
 import mimetypes
-import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.header import decode_header
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 # ── Storage dir ───────────────────────────────────────────────────────────────
-ATTACHMENT_STORAGE_DIR = Path(getattr(settings, "ATTACHMENT_STORAGE_DIR", "/tmp/dispute_attachments"))
+ATTACHMENT_STORAGE_DIR = Path(
+    getattr(settings, "ATTACHMENT_STORAGE_DIR", "/tmp/dispute_attachments")
+)
 ATTACHMENT_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 # GCS — imported lazily so the module loads even without google-cloud-storage installed
-from src.core.services.gcs_service import upload_attachment as _gcs_upload, get_public_url as _gcs_url, GCSUnavailable
+from src.core.services.gcs_service import GCSUnavailable  # noqa: E402
+from src.core.services.gcs_service import upload_attachment as _gcs_upload  # noqa: E402
 
 # ── Dispute-token regex ───────────────────────────────────────────────────────
 DISPUTE_TOKEN_RE = re.compile(r"\bDISP-([A-Z0-9]{8,32})\b", re.IGNORECASE)
@@ -41,6 +44,7 @@ DISPUTE_TOKEN_RE = re.compile(r"\bDISP-([A-Z0-9]{8,32})\b", re.IGNORECASE)
 # ─────────────────────────────────────────────────────────────────────────────
 # Password helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def encode_password(plain: str) -> str:
     """Base64-encode a plain-text password for storage."""
@@ -56,13 +60,14 @@ def decode_password(encoded: str) -> str:
 # Connectivity test
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def test_mailbox_connection(
     imap_host: str,
     imap_port: int,
     use_ssl: bool,
     email_address: str,
     password_enc: str,
-) -> Tuple[bool, str]:
+) -> tuple[bool, str]:
     """
     Synchronously tests an IMAP connection.
     Returns (ok: bool, message: str).
@@ -72,7 +77,7 @@ def test_mailbox_connection(
         if use_ssl:
             conn = imaplib.IMAP4_SSL(imap_host, imap_port)
         else:
-            conn = imaplib.IMAP4(imap_host, imap_port)
+            conn = imaplib.IMAP4(imap_host, imap_port)  # type: ignore
         conn.login(email_address, password)
         conn.select("INBOX", readonly=True)
         conn.logout()
@@ -89,7 +94,8 @@ def test_mailbox_connection(
 # Header decoding
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _decode_header_value(raw: Optional[str]) -> str:
+
+def _decode_header_value(raw: str | None) -> str:
     if not raw:
         return ""
     parts = decode_header(raw)
@@ -106,7 +112,10 @@ def _decode_header_value(raw: Optional[str]) -> str:
 # Attachment text extraction
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _extract_text_from_attachment(file_bytes: bytes, filename: str, mime_type: str) -> str:
+
+def _extract_text_from_attachment(
+    file_bytes: bytes, filename: str, mime_type: str
+) -> str:
     """
     Best-effort text extraction for common attachment types.
     Gracefully returns a placeholder if extraction fails.
@@ -117,7 +126,11 @@ def _extract_text_from_attachment(file_bytes: bytes, filename: str, mime_type: s
     if ext == "pdf" or "pdf" in mime_type:
         try:
             from src.utils.pdf_extractor import extract_text_from_bytes
-            return extract_text_from_bytes(file_bytes, "pdf") or "[PDF: no extractable text]"
+
+            return (
+                extract_text_from_bytes(file_bytes, "pdf")
+                or "[PDF: no extractable text]"
+            )
         except Exception as e:
             logger.warning(f"PDF extraction failed for {filename}: {e}")
             return "[PDF: extraction error]"
@@ -125,9 +138,12 @@ def _extract_text_from_attachment(file_bytes: bytes, filename: str, mime_type: s
     # ── CSV ──────────────────────────────────────────────────────────────────
     if ext == "csv" or "csv" in mime_type:
         try:
-            import io
             import csv
-            reader = csv.reader(io.StringIO(file_bytes.decode("utf-8", errors="replace")))
+            import io
+
+            reader = csv.reader(
+                io.StringIO(file_bytes.decode("utf-8", errors="replace"))
+            )
             rows = list(reader)
             # First 50 rows as tab-separated
             return "\n".join("\t".join(row) for row in rows[:50])
@@ -139,13 +155,19 @@ def _extract_text_from_attachment(file_bytes: bytes, filename: str, mime_type: s
     if ext in ("xlsx", "xls") or "spreadsheet" in mime_type or "excel" in mime_type:
         try:
             import io
-            import openpyxl
-            wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+
+            import openpyxl  # type: ignore
+
+            wb = openpyxl.load_workbook(
+                io.BytesIO(file_bytes), read_only=True, data_only=True
+            )
             lines = []
             for sheet in wb.worksheets:
                 lines.append(f"[Sheet: {sheet.title}]")
                 for row in sheet.iter_rows(max_row=50, values_only=True):
-                    lines.append("\t".join(str(c) if c is not None else "" for c in row))
+                    lines.append(
+                        "\t".join(str(c) if c is not None else "" for c in row)
+                    )
             return "\n".join(lines)
         except Exception as e:
             logger.warning(f"Excel extraction failed for {filename}: {e}")
@@ -156,15 +178,21 @@ def _extract_text_from_attachment(file_bytes: bytes, filename: str, mime_type: s
         return file_bytes.decode("utf-8", errors="replace")[:8000]
 
     # ── Images (describe as placeholder — Groq can't read images currently) ──
-    if ext in ("png", "jpg", "jpeg", "gif", "webp", "tiff", "bmp") or "image/" in mime_type:
-        return f"[Image attachment: {filename} — visual content, cannot extract text with current LLM]"
+    if (
+        ext in ("png", "jpg", "jpeg", "gif", "webp", "tiff", "bmp")
+        or "image/" in mime_type
+    ):
+        return f"[Image attachment: {filename} — visual content, cannot extract text with current LLM]"  # noqa: E501
 
-    return f"[Attachment: {filename} ({mime_type}) — unsupported type for text extraction]"
+    return (
+        f"[Attachment: {filename} ({mime_type}) — unsupported type for text extraction]"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Save attachment to filesystem
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _save_attachment(file_bytes: bytes, original_filename: str, mailbox_id: int) -> str:
     """
@@ -173,16 +201,20 @@ def _save_attachment(file_bytes: bytes, original_filename: str, mailbox_id: int)
     """
     if settings.GCS_ENABLED:
         try:
-            return _gcs_upload(file_bytes, original_filename, folder=f"inbound/mailbox_{mailbox_id}")
+            return _gcs_upload(
+                file_bytes, original_filename, folder=f"inbound/mailbox_{mailbox_id}"
+            )
         except GCSUnavailable as gcs_err:
             import logging as _log
+
             _log.getLogger(__name__).warning(
-                f"GCS upload failed for inbound attachment, falling back to local: {gcs_err}"
+                f"GCS upload failed for inbound attachment, falling back to local: {gcs_err}"  # noqa: E501
             )
         except Exception as gcs_err:
             import logging as _log
+
             _log.getLogger(__name__).warning(
-                f"GCS upload error for inbound attachment, falling back to local: {gcs_err}"
+                f"GCS upload error for inbound attachment, falling back to local: {gcs_err}"  # noqa: E501
             )
     # Local fallback
     safe_name = re.sub(r"[^\w.\-]", "_", original_filename)[:100]
@@ -198,10 +230,11 @@ def _save_attachment(file_bytes: bytes, original_filename: str, mailbox_id: int)
 # Email parsing
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _parse_email_message(
     raw_bytes: bytes,
     mailbox_id: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Parse a raw RFC-2822 email message.
     Returns a dict with keys:
@@ -212,28 +245,28 @@ def _parse_email_message(
     msg = email.message_from_bytes(raw_bytes)
 
     # Headers
-    message_uid   = msg.get("Message-ID", "").strip()
-    sender_email  = email.utils.parseaddr(_decode_header_value(msg.get("From", "")))[1]
+    message_uid = msg.get("Message-ID", "").strip()
+    sender_email = email.utils.parseaddr(_decode_header_value(msg.get("From", "")))[1]
     recipient_raw = msg.get("To") or msg.get("Delivered-To") or ""
     recipient_email = email.utils.parseaddr(_decode_header_value(recipient_raw))[1]
-    subject       = _decode_header_value(msg.get("Subject", "(no subject)"))
+    subject = _decode_header_value(msg.get("Subject", "(no subject)"))
 
     # Date
     date_str = msg.get("Date", "")
     try:
         received_at = email.utils.parsedate_to_datetime(date_str)
         if received_at.tzinfo is None:
-            received_at = received_at.replace(tzinfo=timezone.utc)
+            received_at = received_at.replace(tzinfo=UTC)
     except Exception:
-        received_at = datetime.now(timezone.utc)
+        received_at = datetime.now(UTC)
 
-    body_text  = ""
-    body_html  = ""
-    attachments: List[Dict] = []
+    body_text = ""
+    body_html = ""
+    attachments: list[dict] = []
 
     for part in msg.walk():
         ct = part.get_content_type()
-        cd = part.get("Content-Disposition", "")
+        part.get("Content-Disposition", "")
         filename = part.get_filename()
 
         if filename:
@@ -241,17 +274,28 @@ def _parse_email_message(
             filename = _decode_header_value(filename)
             try:
                 payload = part.get_payload(decode=True)
-                if payload:
-                    mime_type = ct or mimetypes.guess_type(filename)[0] or "application/octet-stream"
-                    extracted = _extract_text_from_attachment(payload, filename, mime_type)
-                    rel_path  = _save_attachment(payload, filename, mailbox_id)
-                    attachments.append({
-                        "file_name":      filename,
-                        "file_type":      Path(filename).suffix.lower().lstrip(".") or mime_type,
-                        "file_size":      len(payload),
-                        "file_path":      rel_path,
-                        "extracted_text": extracted,
-                    })
+                if payload and isinstance(payload, bytes):
+                    mime_type = (
+                        ct
+                        or mimetypes.guess_type(filename)[0]
+                        or "application/octet-stream"
+                    )
+                    extracted = _extract_text_from_attachment(
+                        payload,
+                        filename,
+                        mime_type,  # type: ignore
+                    )
+                    rel_path = _save_attachment(payload, filename, mailbox_id)  # type: ignore
+                    attachments.append(
+                        {
+                            "file_name": filename,
+                            "file_type": Path(filename).suffix.lower().lstrip(".")
+                            or mime_type,
+                            "file_size": len(payload),
+                            "file_path": rel_path,
+                            "extracted_text": extracted,
+                        }
+                    )
             except Exception as e:
                 logger.warning(f"Failed to process attachment {filename}: {e}")
             continue
@@ -259,11 +303,15 @@ def _parse_email_message(
         if ct == "text/plain" and not body_text:
             payload = part.get_payload(decode=True)
             if payload:
-                body_text = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+                body_text = payload.decode(  # type: ignore
+                    part.get_content_charset() or "utf-8", errors="replace"
+                )
         elif ct == "text/html" and not body_html:
             payload = part.get_payload(decode=True)
             if payload:
-                body_html = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+                body_html = payload.decode(  # type: ignore
+                    part.get_content_charset() or "utf-8", errors="replace"
+                )
 
     # Fallback: strip HTML for body_text if no plain part
     if not body_text and body_html:
@@ -271,18 +319,20 @@ def _parse_email_message(
         body_text = re.sub(r"\s+", " ", body_text).strip()
 
     return {
-        "message_uid":      message_uid,
-        "sender_email":     sender_email,
-        "recipient_email":  recipient_email,
-        "subject":          subject,
-        "body_text":        body_text[:10000],
-        "body_html":        body_html[:20000] if body_html else None,
-        "received_at":      received_at,
-        "has_attachment":   bool(attachments),
-        "attachments":      attachments,
+        "message_uid": message_uid,
+        "sender_email": sender_email,
+        "recipient_email": recipient_email,
+        "subject": subject,
+        "body_text": body_text[:10000],
+        "body_html": body_html[:20000] if body_html else None,
+        "received_at": received_at,
+        "has_attachment": bool(attachments),
+        "attachments": attachments,
         # RFC-2822 threading
-        "in_reply_to_header": _decode_header_value(msg.get("In-Reply-To", "")).strip() or None,
-        "references_header":  _decode_header_value(msg.get("References", "")).strip()  or None,
+        "in_reply_to_header": _decode_header_value(msg.get("In-Reply-To", "")).strip()
+        or None,
+        "references_header": _decode_header_value(msg.get("References", "")).strip()
+        or None,
     }
 
 
@@ -290,16 +340,17 @@ def _parse_email_message(
 # Main fetch function
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def fetch_unseen_emails(
     imap_host: str,
     imap_port: int,
     use_ssl: bool,
     email_address: str,
     password_enc: str,
-    last_uid_seen: Optional[int],
+    last_uid_seen: int | None,
     mailbox_id: int,
     batch_size: int = 20,
-) -> Tuple[List[Dict], Optional[int]]:
+) -> tuple[list[dict], int | None]:
     """
     Connect to IMAP, fetch unseen emails newer than last_uid_seen.
     Returns (list_of_parsed_emails, new_max_uid).
@@ -307,23 +358,23 @@ def fetch_unseen_emails(
       body_text, body_html, received_at, has_attachment, attachments, imap_uid.
     """
     password = decode_password(password_enc)
-    results: List[Dict] = []
-    new_max_uid: Optional[int] = last_uid_seen
+    results: list[dict] = []
+    new_max_uid: int | None = last_uid_seen
 
     try:
         if use_ssl:
             conn = imaplib.IMAP4_SSL(imap_host, imap_port)
         else:
-            conn = imaplib.IMAP4(imap_host, imap_port)
+            conn = imaplib.IMAP4(imap_host, imap_port)  # type: ignore
 
         conn.login(email_address, password)
         conn.select("INBOX", readonly=False)
 
-        # Search for UNSEEN messages; if we have a last_uid, use UID SEARCH for efficiency
+        # Search for UNSEEN messages; if we have a last_uid, use UID SEARCH for efficiency  # noqa: E501
         if last_uid_seen:
-            status, data = conn.uid("search", None, f"UID {last_uid_seen + 1}:*")
+            status, data = conn.uid("search", None, f"UID {last_uid_seen + 1}:*")  # type: ignore
         else:
-            status, data = conn.uid("search", None, "UNSEEN")
+            status, data = conn.uid("search", None, "UNSEEN")  # type: ignore
 
         if status != "OK" or not data[0]:
             conn.logout()
@@ -357,7 +408,9 @@ def fetch_unseen_emails(
 
         conn.logout()
     except Exception as e:
-        logger.error(f"IMAP fetch error for mailbox {email_address}: {e}", exc_info=True)
+        logger.error(
+            f"IMAP fetch error for mailbox {email_address}: {e}", exc_info=True
+        )
 
     return results, new_max_uid
 
@@ -366,7 +419,8 @@ def fetch_unseen_emails(
 # Dispute token extractor
 # ─────────────────────────────────────────────────────────────────────────────
 
-def extract_dispute_token(text: str) -> Optional[str]:
+
+def extract_dispute_token(text: str) -> str | None:
     """
     Extract DISP-XXXXXXXXX token from email body.
     Returns the full token string e.g. 'DISP-A1B2C3D4' or None.

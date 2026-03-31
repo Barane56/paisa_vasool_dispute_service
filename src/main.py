@@ -1,4 +1,5 @@
 import uvicorn
+
 from src.api.rest.app import create_app
 from src.config.settings import settings
 
