@@ -1,26 +1,29 @@
 """
 src/control/prompts/summarize_episodes.py
 """
+
 from pathlib import Path
-from typing import List, Dict, Optional
+
 from poml import poml as render_poml
 
-PROMPT_NAME    = "summarize_episodes"
+PROMPT_NAME = "summarize_episodes"
 PROMPT_VERSION = "1.0"
 _TEMPLATE = str(Path(__file__).parent / "templates" / "summarize_episodes.poml")
 
 
 def build_summarize_episodes_prompt(
-    episodes: List[Dict],
-    existing_summary: Optional[str] = None,
+    episodes: list[dict],
+    existing_summary: str | None = None,
 ) -> str:
-    episodes_text = "\n".join([
-        f"[{ep.get('actor', 'UNKNOWN')}] {ep.get('content_text', '')[:300]}"
-        for ep in episodes
-    ])
+    episodes_text = "\n".join(
+        [
+            f"[{ep.get('actor', 'UNKNOWN')}] {ep.get('content_text', '')[:300]}"
+            for ep in episodes
+        ]
+    )
 
     context = {
-        "episodes_text":    episodes_text,
+        "episodes_text": episodes_text,
         "existing_summary": existing_summary or "",
     }
 

@@ -30,21 +30,27 @@ Install:
   uv add fastembed
 """
 
+import json
 import logging
 import re
-import json
 import threading
-from typing import Optional, List
 
-from groq import AsyncGroq
 from fastembed import TextEmbedding
+from groq import AsyncGroq
 
 from src.config.settings import settings
-from src.core.exceptions import LLMError, InvoiceExtractionError
-from src.observability import observe, langfuse_context
-from src.control.prompts import build_extract_invoice_prompt, build_summarize_episodes_prompt
-from src.control.prompts.extract_invoice import PROMPT_NAME as EXTRACT_PROMPT_NAME, PROMPT_VERSION as EXTRACT_PROMPT_VERSION
-from src.control.prompts.summarize_episodes import PROMPT_NAME as SUMMARIZE_PROMPT_NAME, PROMPT_VERSION as SUMMARIZE_PROMPT_VERSION
+from src.control.prompts import (
+    build_extract_invoice_prompt,
+    build_summarize_episodes_prompt,
+)
+from src.control.prompts.extract_invoice import PROMPT_NAME as EXTRACT_PROMPT_NAME
+from src.control.prompts.extract_invoice import PROMPT_VERSION as EXTRACT_PROMPT_VERSION
+from src.control.prompts.summarize_episodes import PROMPT_NAME as SUMMARIZE_PROMPT_NAME
+from src.control.prompts.summarize_episodes import (
+    PROMPT_VERSION as SUMMARIZE_PROMPT_VERSION,
+)
+from src.core.exceptions import InvoiceExtractionError, LLMError
+from src.observability import langfuse_context, observe
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +59,7 @@ logger = logging.getLogger(__name__)
 # Loaded once at first use (lazy) — model downloads on first call (~33MB for bge-small).
 # All model/dims config lives in settings — swap there, nothing here changes.
 
-_embed_model: Optional[TextEmbedding] = None
+_embed_model: TextEmbedding | None = None
 _embed_lock = threading.Lock()
 
 
@@ -63,8 +69,9 @@ def _get_embed_model() -> TextEmbedding:
         with _embed_lock:
             if _embed_model is None:
                 import os
-                # Honour FASTEMBED_CACHE_PATH if set (matches the Docker build-time path).
-                # When the env var is set the model is already on disk — no download happens.
+
+                # Honour FASTEMBED_CACHE_PATH if set (matches the Docker build-time path).  # noqa: E501
+                # When the env var is set the model is already on disk — no download happens.  # noqa: E501
                 cache_dir = os.environ.get("FASTEMBED_CACHE_PATH") or None
                 logger.info(
                     f"Loading local embedding model: {settings.EMBEDDING_MODEL} "
@@ -79,18 +86,26 @@ def _get_embed_model() -> TextEmbedding:
 
 # ─── LLM Client ───────────────────────────────────────────────────────────────
 
+
 class LLMClient:
     def __init__(self):
-        self.client        = AsyncGroq(api_key=settings.GROQ_API_KEY)
-        self.model           = settings.GROQ_MODEL            # 70b — heavy tasks only
-        self.fast_model      = settings.GROQ_FAST_MODEL       # 8b — extract, summarize
-        self.reasoning_model = settings.GROQ_REASONING_MODEL  # qwen/qwen3-32b — classify, detect context shift
-        self.invoice_model   = settings.GROQ_INVOICE_MODEL
+        self.client = AsyncGroq(api_key=settings.GROQ_API_KEY)
+        self.model = settings.GROQ_MODEL  # 70b — heavy tasks only
+        self.fast_model = settings.GROQ_FAST_MODEL  # 8b — extract, summarize
+        self.reasoning_model = (
+            settings.GROQ_REASONING_MODEL
+        )  # qwen/qwen3-32b — classify, detect context shift
+        self.invoice_model = settings.GROQ_INVOICE_MODEL
 
     # ------------------------------------------------------------------ #
     # Generic chat                                                        #
     # ------------------------------------------------------------------ #
-    async def chat(self, prompt: str, system: str = None, json_mode: bool = True) -> str:
+    async def chat(  # type: ignore
+        self,
+        prompt: str,
+        system: str | None = None,
+        json_mode: bool = True,  # type: ignore
+    ) -> str:
         """
         Generic chat using the 70b model.
 
@@ -103,12 +118,12 @@ class LLMClient:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        kwargs = dict(
-            model=self.model,
-            messages=messages,
-            temperature=0.1,
-            max_tokens=1024,
-        )
+        kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.1,
+            "max_tokens": 1024,
+        }
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
@@ -129,40 +144,53 @@ class LLMClient:
                     )
                     # Extract what the model tried to send so it can self-correct
                     import re as _re
-                    bad_match = _re.search(r"'failed_generation': '(.*?)'(?:,|\})", err_str, _re.DOTALL)
-                    bad_output = bad_match.group(1) if bad_match else "(see previous attempt)"
+
+                    bad_match = _re.search(
+                        r"'failed_generation': '(.*?)'(?:,|\})", err_str, _re.DOTALL
+                    )
+                    bad_output = (
+                        bad_match.group(1) if bad_match else "(see previous attempt)"
+                    )
                     messages = [
                         *messages,
                         {"role": "assistant", "content": bad_output},
-                        {"role": "user", "content": (
-                            "Your previous response was rejected because ai_response "
-                            "was a JSON object instead of a plain string. "
-                            "ai_response MUST be a single JSON string with \\n for line breaks — "
-                            "NOT a nested object or array. "
-                            "Return the corrected JSON now with ai_response as a plain string."
-                        )},
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your previous response was rejected because ai_response "  # noqa: E501
+                                "was a JSON object instead of a plain string. "
+                                "ai_response MUST be a single JSON string with \\n for line breaks — "  # noqa: E501
+                                "NOT a nested object or array. "
+                                "Return the corrected JSON now with ai_response as a plain string."  # noqa: E501
+                            ),
+                        },
                     ]
                     kwargs["messages"] = messages
                     continue
                 logger.error(f"Groq chat error: {e}")
-                raise LLMError(f"Groq API request failed: {e}")
+                raise LLMError(f"Groq API request failed: {e}")  # noqa: B904
 
     # ------------------------------------------------------------------ #
     # Fast chat — uses 8b model for simple classify/extract/detect tasks  #
     # ------------------------------------------------------------------ #
-    async def chat_fast(self, prompt: str, system: str = None, json_mode: bool = True) -> str:
+    async def chat_fast(
+        self,
+        prompt: str,
+        system: str | None = None,
+        json_mode: bool = True,  # type: ignore
+    ) -> str:
         """Same as chat() but uses GROQ_FAST_MODEL (8b) to save quota."""
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        kwargs = dict(
-            model=self.fast_model,
-            messages=messages,
-            temperature=0.1,
-            max_tokens=1024,
-        )
+        kwargs = {
+            "model": self.fast_model,
+            "messages": messages,
+            "temperature": 0.1,
+            "max_tokens": 1024,
+        }
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
@@ -171,7 +199,7 @@ class LLMClient:
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"Groq fast chat error: {e}")
-            raise LLMError(f"Groq API request failed: {e}")
+            raise LLMError(f"Groq API request failed: {e}")  # noqa: B904
 
     # ------------------------------------------------------------------ #
     # Reasoning chat — qwen/qwen3-32b for classify + context shift      #
@@ -189,7 +217,12 @@ class LLMClient:
 
     _REASONING_MAX_RETRIES = 3
 
-    async def chat_reasoning(self, prompt: str, system: str = None, json_mode: bool = True) -> str:
+    async def chat_reasoning(
+        self,
+        prompt: str,
+        system: str | None = None,
+        json_mode: bool = True,  # type: ignore
+    ) -> str:
         """
         Uses GROQ_REASONING_MODEL (qwen/qwen3-32b) with strict guardrails.
 
@@ -207,19 +240,23 @@ class LLMClient:
             messages.append({"role": "system", "content": system})
 
         json_suffix = (
-            "\n\nReturn ONLY a single valid JSON object. "
-            "No markdown. No code fences. No commentary. "
-            "Start with { and end with }."
-        ) if json_mode else ""
+            (
+                "\n\nReturn ONLY a single valid JSON object. "
+                "No markdown. No code fences. No commentary. "
+                "Start with { and end with }."
+            )
+            if json_mode
+            else ""
+        )
         messages.append({"role": "user", "content": prompt + json_suffix})
 
-        kwargs = dict(
-            model=self.reasoning_model,
-            messages=messages,
-            temperature=0.1,
-            max_tokens=4096,
-            reasoning_format="hidden",   # suppress <think> block entirely
-        )
+        kwargs = {
+            "model": self.reasoning_model,
+            "messages": messages,
+            "temperature": 0.1,
+            "max_tokens": 4096,
+            "reasoning_format": "hidden",  # suppress <think> block entirely
+        }
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 
@@ -238,7 +275,7 @@ class LLMClient:
                         json.loads(cleaned)
                     except json.JSONDecodeError as parse_err:
                         logger.warning(
-                            f"chat_reasoning attempt {attempt}/{self._REASONING_MAX_RETRIES}: "
+                            f"chat_reasoning attempt {attempt}/{self._REASONING_MAX_RETRIES}: "  # noqa: E501
                             f"non-JSON output despite json_object format — retrying. "
                             f"err={parse_err} snippet={cleaned[:200]!r}"
                         )
@@ -246,11 +283,14 @@ class LLMClient:
                         messages = [
                             *messages,
                             {"role": "assistant", "content": raw},
-                            {"role": "user", "content": (
-                                "Your previous response was not valid JSON. "
-                                "Output ONLY the JSON object — no markdown, no explanation. "
-                                "Start immediately with { and end with }."
-                            )},
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Your previous response was not valid JSON. "
+                                    "Output ONLY the JSON object — no markdown, no explanation. "  # noqa: E501
+                                    "Start immediately with { and end with }."
+                                ),
+                            },
                         ]
                         continue
 
@@ -266,6 +306,7 @@ class LLMClient:
                 last_error = exc
                 if attempt < self._REASONING_MAX_RETRIES:
                     import asyncio as _asyncio
+
                     await _asyncio.sleep(1.5 * attempt)
 
         raise LLMError(
@@ -301,11 +342,20 @@ class LLMClient:
     # Invoice data extraction                                             #
     # ------------------------------------------------------------------ #
     @observe(name="llm_extract_invoice_data")
-    async def extract_invoice_data(self, raw_text: str, attachment_metadata: list = None) -> dict:
-        prompt = build_extract_invoice_prompt(raw_text, attachment_metadata=attachment_metadata)
+    async def extract_invoice_data(
+        self,
+        raw_text: str,
+        attachment_metadata: list = None,  # type: ignore
+    ) -> dict:
+        prompt = build_extract_invoice_prompt(
+            raw_text, attachment_metadata=attachment_metadata
+        )
         langfuse_context.update_current_observation(
             input={"prompt": prompt},
-            metadata={"prompt_name": EXTRACT_PROMPT_NAME, "prompt_version": EXTRACT_PROMPT_VERSION},
+            metadata={
+                "prompt_name": EXTRACT_PROMPT_NAME,
+                "prompt_version": EXTRACT_PROMPT_VERSION,
+            },
         )
 
         try:
@@ -316,30 +366,39 @@ class LLMClient:
                 max_tokens=2048,
                 response_format={"type": "json_object"},
             )
-            raw  = response.choices[0].message.content
+            raw = response.choices[0].message.content
             data = json.loads(raw)
-            logger.info(f"Invoice extraction succeeded. invoice_number={data.get('invoice_number')}")
+            logger.info(
+                f"Invoice extraction succeeded. invoice_number={data.get('invoice_number')}"  # noqa: E501
+            )
             return data
         except json.JSONDecodeError as e:
             logger.error(f"Invoice extraction JSON parse error: {e}")
-            raise InvoiceExtractionError(f"Could not parse LLM response as JSON: {e}")
+            raise InvoiceExtractionError(f"Could not parse LLM response as JSON: {e}")  # noqa: B904
         except Exception as e:
             logger.error(f"Invoice extraction LLM error: {e}")
-            raise InvoiceExtractionError(str(e))
+            raise InvoiceExtractionError(str(e))  # noqa: B904
 
     # ------------------------------------------------------------------ #
     # Summarization                                                       #
     # ------------------------------------------------------------------ #
     @observe(name="llm_summarize_episodes")
-    async def summarize_episodes(self, episodes: list, existing_summary: str = None) -> str:
+    async def summarize_episodes(
+        self,
+        episodes: list,
+        existing_summary: str = None,  # type: ignore
+    ) -> str:
         prompt = build_summarize_episodes_prompt(episodes, existing_summary)
         langfuse_context.update_current_observation(
             input={"prompt": prompt},
-            metadata={"prompt_name": SUMMARIZE_PROMPT_NAME, "prompt_version": SUMMARIZE_PROMPT_VERSION},
+            metadata={
+                "prompt_name": SUMMARIZE_PROMPT_NAME,
+                "prompt_version": SUMMARIZE_PROMPT_VERSION,
+            },
         )
         try:
             response = await self.client.chat.completions.create(
-                model=self.fast_model,   # summarization doesn't need 70b
+                model=self.fast_model,  # summarization doesn't need 70b
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=512,
@@ -347,12 +406,12 @@ class LLMClient:
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.error(f"Groq summarization error: {e}")
-            raise LLMError(f"Summarization failed: {e}")
+            raise LLMError(f"Summarization failed: {e}")  # noqa: B904
 
     # ------------------------------------------------------------------ #
     # Local embeddings via fastembed                                      #
     # ------------------------------------------------------------------ #
-    async def embed(self, text: str) -> Optional[List[float]]:
+    async def embed(self, text: str) -> list[float] | None:
         """
         Generate a local embedding using fastembed (ONNX runtime, no torch).
 
@@ -368,9 +427,9 @@ class LLMClient:
             return None
 
         try:
-            model  = _get_embed_model()
+            model = _get_embed_model()
             # embed() returns a generator of numpy arrays, one per input string
-            vector = next(model.embed([text]))
+            vector = next(model.embed([text]))  # type: ignore
             return vector.tolist()
         except Exception as e:
             logger.error(f"Local embedding error: {e}")
@@ -379,7 +438,7 @@ class LLMClient:
 
 # ─── Singleton ────────────────────────────────────────────────────────────────
 
-_llm_client: Optional[LLMClient] = None
+_llm_client: LLMClient | None = None
 _client_lock = threading.Lock()
 
 

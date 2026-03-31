@@ -20,7 +20,7 @@ BEGIN
     ) THEN
         ALTER TABLE dispute_memory_episode
         ADD COLUMN content_embedding vector(1536);
-        
+
         RAISE NOTICE 'content_embedding column added successfully.';
     ELSE
         RAISE NOTICE 'content_embedding column already exists, skipping.';

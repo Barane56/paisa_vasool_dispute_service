@@ -1,7 +1,7 @@
 # email_schemas.py — Email Pydantic schemas
-from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, List
+
+from pydantic import BaseModel
 
 
 class EmailAttachmentResponse(BaseModel):
@@ -20,16 +20,16 @@ class EmailResponse(BaseModel):
     received_at: datetime
     has_attachment: bool
     processing_status: str
-    failure_reason: Optional[str]
-    dispute_id: Optional[int]
-    routing_confidence: Optional[float]
-    attachments: List[EmailAttachmentResponse] = []
+    failure_reason: str | None
+    dispute_id: int | None
+    routing_confidence: float | None
+    attachments: list[EmailAttachmentResponse] = []
     model_config = {"from_attributes": True}
 
 
 class EmailListResponse(BaseModel):
     total: int
-    items: List[EmailResponse]
+    items: list[EmailResponse]
 
 
 class EmailIngestResponse(BaseModel):

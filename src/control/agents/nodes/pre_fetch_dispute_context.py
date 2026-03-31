@@ -42,14 +42,13 @@ This node only provides the classify_email prompt with a comparison baseline.
 from __future__ import annotations
 
 import logging
-from typing import Optional, Dict
 
-from src.observability import observe, langfuse_context
 from src.control.agents.state import EmailProcessingState
+from src.observability import langfuse_context, observe
 
 logger = logging.getLogger(__name__)
 
-_EMPTY_CONTEXT: Dict = {}
+_EMPTY_CONTEXT: dict = {}
 
 
 @observe(name="node_pre_fetch_dispute_context")
@@ -62,14 +61,14 @@ async def node_pre_fetch_dispute_context(
 
     No-op if no token match or no db_session.
     """
-    email_id         = state["email_id"]
+    email_id = state["email_id"]
     token_dispute_id = state.get("token_matched_dispute_id")
 
     # Task-level existing_dispute_id is set when tasks.py matched the email
     # via In-Reply-To/References thread headers BEFORE the pipeline started.
     # This is the most common follow-up path — the customer replies via their
     # email client without any DISP token in the body.
-    task_dispute_id  = state.get("existing_dispute_id")
+    task_dispute_id = state.get("existing_dispute_id")
 
     # Use whichever is available; token match is more authoritative
     prior_dispute_id = token_dispute_id or task_dispute_id
@@ -110,13 +109,13 @@ async def node_pre_fetch_dispute_context(
             )
             return {**state, "existing_dispute_context": _EMPTY_CONTEXT}
 
-        context: Dict = {
-            "dispute_id":     dispute.dispute_id,
-            "dispute_type":   (
+        context: dict = {
+            "dispute_id": dispute.dispute_id,
+            "dispute_type": (
                 dispute.dispute_type.reason_name if dispute.dispute_type else "Unknown"
             ),
-            "description":    dispute.description or "",
-            "status":         dispute.status or "OPEN",
+            "description": dispute.description or "",
+            "status": dispute.status or "OPEN",
             "invoice_number": (
                 dispute.invoice.invoice_number if dispute.invoice else None
             ),
@@ -130,10 +129,10 @@ async def node_pre_fetch_dispute_context(
         )
         langfuse_context.update_current_observation(
             output={
-                "dispute_id":   dispute.dispute_id,
+                "dispute_id": dispute.dispute_id,
                 "dispute_type": context["dispute_type"],
-                "status":       context["status"],
-                "source":       _source,
+                "status": context["status"],
+                "source": _source,
             }
         )
 

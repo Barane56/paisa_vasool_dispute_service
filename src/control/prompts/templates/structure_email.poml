@@ -166,9 +166,10 @@
     ───────────────────────────────────────────────────────────────
     requires_new_case    — true only for: DISPUTE, DEDUCTION_CLAIM, CREDIT_REQUEST,
                            INVOICE_CORRECTION_REQUEST, PAYMENT_DELAY_REQUEST, MULTI_INTENT,
-                           ESCALATION, LEGAL_THREAT, GST_QUERY, TDS_DEDUCTION
+                           ESCALATION, LEGAL_THREAT, GST_QUERY, TDS_DEDUCTION,
+                           DOCUMENT_REQUEST
                            false for everything else (SOCIAL, IRRELEVANT, FACTUAL_QUERY,
-                           PAYMENT_ADVICE, DOCUMENT_REQUEST, RESOLUTION_ACK, ABUSIVE,
+                           PAYMENT_ADVICE, RESOLUTION_ACK, ABUSIVE,
                            DUPLICATE_CONTACT, ADVANCE_PAYMENT)
 
     requires_fork        — true in TWO cases:

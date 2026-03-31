@@ -34,4 +34,3 @@ ALTER TABLE email_inbox
     FOREIGN KEY (dispute_id)
     REFERENCES dispute_master (dispute_id)
     ON DELETE SET NULL;
-

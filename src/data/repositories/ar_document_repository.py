@@ -3,12 +3,12 @@ src/data/repositories/ar_document_repository.py
 ================================================
 Repository for AR document graph — ar_documents + ar_document_keys.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
-from sqlalchemy import select, and_, or_, distinct
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -28,9 +28,9 @@ class ARDocumentRepository:
         customer_scope: str,
         doc_type: str,
         doc_date,
-        file_path: Optional[str],
-        raw_text: Optional[str],
-        uploaded_by: Optional[int],
+        file_path: str | None,
+        raw_text: str | None,
+        uploaded_by: int | None,
     ) -> ARDocument:
         doc = ARDocument(
             customer_scope=customer_scope,
@@ -53,32 +53,34 @@ class ARDocumentRepository:
         inserted = []
         for ek in keys:
             # Check for existing key with same type+norm on this doc
-            existing = (await self.db.execute(
-                select(ARDocumentKey).where(
-                    and_(
-                        ARDocumentKey.doc_id        == doc_id,
-                        ARDocumentKey.key_type       == ek.key_type,
-                        ARDocumentKey.key_value_norm == ek.key_value_norm,
+            existing = (
+                await self.db.execute(
+                    select(ARDocumentKey).where(
+                        and_(
+                            ARDocumentKey.doc_id == doc_id,
+                            ARDocumentKey.key_type == ek.key_type,
+                            ARDocumentKey.key_value_norm == ek.key_value_norm,
+                        )
                     )
                 )
-            )).scalar_one_or_none()
+            ).scalar_one_or_none()
 
             if existing:
                 # Update confidence if new extraction is more confident
                 if ek.confidence > existing.confidence:
                     existing.confidence = ek.confidence
-                    existing.source     = ek.source
+                    existing.source = ek.source
                 inserted.append(existing)
                 continue
 
             key = ARDocumentKey(
-                doc_id         = doc_id,
-                key_type       = ek.key_type,
-                key_value_raw  = ek.key_value_raw,
-                key_value_norm = ek.key_value_norm,
-                confidence     = ek.confidence,
-                source         = ek.source,
-                verified       = False,
+                doc_id=doc_id,
+                key_type=ek.key_type,
+                key_value_raw=ek.key_value_raw,
+                key_value_norm=ek.key_value_norm,
+                confidence=ek.confidence,
+                source=ek.source,
+                verified=False,
             )
             self.db.add(key)
             inserted.append(key)
@@ -88,17 +90,19 @@ class ARDocumentRepository:
 
     # ── Query ─────────────────────────────────────────────────────────────────
 
-    async def get_by_id(self, doc_id: int) -> Optional[ARDocument]:
-        return (await self.db.execute(
-            select(ARDocument)
-            .options(selectinload(ARDocument.keys))
-            .where(ARDocument.doc_id == doc_id)
-        )).scalar_one_or_none()
+    async def get_by_id(self, doc_id: int) -> ARDocument | None:
+        return (
+            await self.db.execute(
+                select(ARDocument)
+                .options(selectinload(ARDocument.keys))
+                .where(ARDocument.doc_id == doc_id)
+            )
+        ).scalar_one_or_none()
 
     async def get_related_documents(
         self,
         doc_id: int,
-        customer_scope: Optional[str] = None,
+        customer_scope: str | None = None,
     ) -> list[dict]:
         """
         Single-hop traversal anchored on an INVOICE or PO document.
@@ -126,15 +130,17 @@ class ARDocumentRepository:
         Returns list of dicts:
           {document, shared_keys: [{key_type, key_value_norm, key_value_raw}]}
         """
-        ANCHOR_TYPES    = {"INVOICE", "PO"}
-        TRAVERSAL_TYPES = {"po_number", "inv_number"}
+        ANCHOR_TYPES = {"INVOICE", "PO"}  # noqa: N806
+        TRAVERSAL_TYPES = {"po_number", "inv_number"}  # noqa: N806
 
         # Step 1: load starting document with its keys
-        start_doc = (await self.db.execute(
-            select(ARDocument)
-            .options(selectinload(ARDocument.keys))
-            .where(ARDocument.doc_id == doc_id)
-        )).scalar_one_or_none()
+        start_doc = (
+            await self.db.execute(
+                select(ARDocument)
+                .options(selectinload(ARDocument.keys))
+                .where(ARDocument.doc_id == doc_id)
+            )
+        ).scalar_one_or_none()
 
         if not start_doc:
             return []
@@ -145,33 +151,39 @@ class ARDocumentRepository:
         else:
             anchor_doc = None
             pivot_keys = [
-                k for k in (start_doc.keys or [])
-                if k.key_type in TRAVERSAL_TYPES
+                k for k in (start_doc.keys or []) if k.key_type in TRAVERSAL_TYPES
             ]
             for pk in pivot_keys:
-                candidate_key = (await self.db.execute(
-                    select(ARDocumentKey)
-                    .join(ARDocument, ARDocument.doc_id == ARDocumentKey.doc_id)
-                    .where(
-                        and_(
-                            ARDocumentKey.key_type       == pk.key_type,
-                            ARDocumentKey.key_value_norm == pk.key_value_norm,
-                            ARDocumentKey.doc_id         != doc_id,
-                            ARDocument.doc_type.in_(ANCHOR_TYPES),
-                            *([ARDocument.customer_scope == customer_scope]
-                              if customer_scope else []),
+                candidate_key = (
+                    await self.db.execute(
+                        select(ARDocumentKey)
+                        .join(ARDocument, ARDocument.doc_id == ARDocumentKey.doc_id)
+                        .where(
+                            and_(
+                                ARDocumentKey.key_type == pk.key_type,
+                                ARDocumentKey.key_value_norm == pk.key_value_norm,
+                                ARDocumentKey.doc_id != doc_id,
+                                ARDocument.doc_type.in_(ANCHOR_TYPES),
+                                *(
+                                    [ARDocument.customer_scope == customer_scope]
+                                    if customer_scope
+                                    else []
+                                ),
+                            )
                         )
+                        .order_by(ARDocument.created_at.desc())
+                        .limit(1)
                     )
-                    .order_by(ARDocument.created_at.desc())
-                    .limit(1)
-                )).scalar_one_or_none()
+                ).scalar_one_or_none()
 
                 if candidate_key:
-                    anchor_doc = (await self.db.execute(
-                        select(ARDocument)
-                        .options(selectinload(ARDocument.keys))
-                        .where(ARDocument.doc_id == candidate_key.doc_id)
-                    )).scalar_one_or_none()
+                    anchor_doc = (
+                        await self.db.execute(
+                            select(ARDocument)
+                            .options(selectinload(ARDocument.keys))
+                            .where(ARDocument.doc_id == candidate_key.doc_id)
+                        )
+                    ).scalar_one_or_none()
                     if anchor_doc:
                         logger.debug(
                             f"get_related_documents: pivoted from "
@@ -186,9 +198,11 @@ class ARDocumentRepository:
                 anchor_doc = start_doc
 
         # Step 3: single hop from anchor via inv_number / po_number only
+        assert anchor_doc is not None
         anchor_keys = [
-            k for k in (anchor_doc.keys or [])
-            if k.key_type in TRAVERSAL_TYPES
+            k
+            for k in (anchor_doc.keys or [])
+            if k.key_type in TRAVERSAL_TYPES  # type: ignore
         ]
         if not anchor_keys:
             return []
@@ -196,58 +210,73 @@ class ARDocumentRepository:
         collected: dict[int, dict] = {}
 
         for ak in anchor_keys:
-            matching = (await self.db.execute(
-                select(ARDocumentKey).where(
-                    and_(
-                        ARDocumentKey.key_type       == ak.key_type,
-                        ARDocumentKey.key_value_norm == ak.key_value_norm,
-                        ARDocumentKey.doc_id         != anchor_doc.doc_id,
+            matching = (
+                (
+                    await self.db.execute(
+                        select(ARDocumentKey).where(
+                            and_(
+                                ARDocumentKey.key_type == ak.key_type,
+                                ARDocumentKey.key_value_norm == ak.key_value_norm,
+                                ARDocumentKey.doc_id != anchor_doc.doc_id,  # type: ignore
+                            )
+                        )
                     )
                 )
-            )).scalars().all()
+                .scalars()
+                .all()
+            )
 
             for mk in matching:
                 other_id = mk.doc_id
                 if other_id not in collected:
-                    collected[other_id] = {"shared_keys": []}
-                collected[other_id]["shared_keys"].append({
-                    "key_type":       ak.key_type,
-                    "key_value_norm": ak.key_value_norm,
-                    "key_value_raw":  ak.key_value_raw,
-                })
+                    collected[other_id] = {"shared_keys": []}  # type: ignore
+                collected[other_id]["shared_keys"].append(  # type: ignore
+                    {
+                        "key_type": ak.key_type,
+                        "key_value_norm": ak.key_value_norm,
+                        "key_value_raw": ak.key_value_raw,
+                    }
+                )
 
         if not collected:
             return []
 
         scope_filter = (
-            [ARDocument.customer_scope == customer_scope]
-            if customer_scope else []
+            [ARDocument.customer_scope == customer_scope] if customer_scope else []
         )
-        related_docs = (await self.db.execute(
-            select(ARDocument)
-            .options(selectinload(ARDocument.keys))
-            .where(
-                and_(
-                    ARDocument.doc_id.in_(list(collected.keys())),
-                    *scope_filter,
+        related_docs = (
+            (
+                await self.db.execute(
+                    select(ARDocument)
+                    .options(selectinload(ARDocument.keys))
+                    .where(
+                        and_(
+                            ARDocument.doc_id.in_(list(collected.keys())),
+                            *scope_filter,
+                        )
+                    )
                 )
             )
-        )).scalars().all()
+            .scalars()
+            .all()
+        )
 
         result = []
         for doc in related_docs:
-            result.append({
-                "document":    doc,
-                "shared_keys": collected[doc.doc_id]["shared_keys"],
-            })
+            result.append(
+                {
+                    "document": doc,
+                    "shared_keys": collected[doc.doc_id]["shared_keys"],  # type: ignore
+                }
+            )
 
-        result.sort(key=lambda x: (x["document"].doc_date or x["document"].created_at))
+        result.sort(key=lambda x: x["document"].doc_date or x["document"].created_at)
         return result
 
     async def get_documents_for_customer(
         self,
         customer_scope: str,
-        doc_type: Optional[str] = None,
+        doc_type: str | None = None,
         limit: int = 50,
     ) -> list[ARDocument]:
         q = (
@@ -271,15 +300,15 @@ class ARDocumentRepository:
         Used by the agent pipeline to inject document chain into LLM context.
         """
         return await self.get_chain_for_reference(
-            key_value_norm = invoice_number_norm,
-            key_type       = "inv_number",
-            customer_scope = customer_scope,
+            key_value_norm=invoice_number_norm,
+            key_type="inv_number",
+            customer_scope=customer_scope,
         )
 
     async def get_chain_for_reference(
         self,
         key_value_norm: str,
-        key_type:       str,
+        key_type: str,
         customer_scope: str,
     ) -> list[dict]:
         """
@@ -294,9 +323,13 @@ class ARDocumentRepository:
 
         Returns [] when no document carries this key.
         """
-        VALID_KEY_TYPES = {
-            "inv_number", "po_number", "grn_number",
-            "payment_ref", "contract_number", "credit_note_number",
+        VALID_KEY_TYPES = {  # noqa: N806
+            "inv_number",
+            "po_number",
+            "grn_number",
+            "payment_ref",
+            "contract_number",
+            "credit_note_number",
         }
         if key_type not in VALID_KEY_TYPES:
             logger.warning(
@@ -308,26 +341,28 @@ class ARDocumentRepository:
             return []
 
         # Find the anchor document for this reference key
-        anchor_key = (await self.db.execute(
-            select(ARDocumentKey)
-            .join(ARDocument, ARDocument.doc_id == ARDocumentKey.doc_id)
-            .where(
-                and_(
-                    ARDocumentKey.key_type       == key_type,
-                    ARDocumentKey.key_value_norm == key_value_norm,
-                    ARDocument.customer_scope    == customer_scope,
+        anchor_key = (
+            await self.db.execute(
+                select(ARDocumentKey)
+                .join(ARDocument, ARDocument.doc_id == ARDocumentKey.doc_id)
+                .where(
+                    and_(
+                        ARDocumentKey.key_type == key_type,
+                        ARDocumentKey.key_value_norm == key_value_norm,
+                        ARDocument.customer_scope == customer_scope,
+                    )
                 )
+                .order_by(ARDocument.created_at.desc())
+                .limit(1)
             )
-            .order_by(ARDocument.created_at.desc())
-            .limit(1)
-        )).scalar_one_or_none()
+        ).scalar_one_or_none()
 
         if not anchor_key:
             return []
 
         return await self.get_related_documents(
-            doc_id         = anchor_key.doc_id,
-            customer_scope = customer_scope,
+            doc_id=anchor_key.doc_id,  # type: ignore
+            customer_scope=customer_scope,
         )
 
     async def add_manual_key(
@@ -338,15 +373,16 @@ class ARDocumentRepository:
     ) -> ARDocumentKey:
         """FA manually adds or corrects a key."""
         from src.core.services.key_extraction_service import normalize_ref
+
         norm = normalize_ref(key_value_raw)
         key = ARDocumentKey(
-            doc_id         = doc_id,
-            key_type       = key_type,
-            key_value_raw  = key_value_raw,
-            key_value_norm = norm,
-            confidence     = 1.0,
-            source         = "manual",
-            verified       = True,
+            doc_id=doc_id,
+            key_type=key_type,
+            key_value_raw=key_value_raw,
+            key_value_norm=norm,
+            confidence=1.0,
+            source="manual",
+            verified=True,
         )
         self.db.add(key)
         await self.db.flush()

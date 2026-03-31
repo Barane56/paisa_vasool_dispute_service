@@ -20,6 +20,7 @@ Sync versions (upload_attachment, download_attachment, get_signed_url)
 are still exported for the rare synchronous callers (e.g. imap_service
 which is called from a Celery worker, not an async route).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,12 +34,12 @@ from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-_bucket         = None
+_bucket = None
 _storage_client = None
-_gcs_init_failed = False   # once broken, stop retrying every call
+_gcs_init_failed = False  # once broken, stop retrying every call
 
 
-class GCSUnavailable(Exception):
+class GCSUnavailable(Exception):  # noqa: N818
     """Raised when GCS is not reachable — callers must fall back to local storage."""
 
 
@@ -50,20 +51,25 @@ GCSCredentialsUnavailable = GCSUnavailable
 # Internal sync helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _get_bucket():
     global _bucket, _storage_client, _gcs_init_failed
 
     if _gcs_init_failed:
-        raise GCSUnavailable("GCS previously failed to initialise — using local storage")
+        raise GCSUnavailable(
+            "GCS previously failed to initialise — using local storage"
+        )
 
     if _bucket is not None:
         return _bucket
 
     try:
-        from google.cloud import storage
+        from google.cloud import storage  # type: ignore
     except ImportError as exc:
         _gcs_init_failed = True
-        raise GCSUnavailable("Missing google-cloud-storage. Run: uv add google-cloud-storage") from exc
+        raise GCSUnavailable(
+            "Missing google-cloud-storage. Run: uv add google-cloud-storage"
+        ) from exc
 
     try:
         _storage_client = storage.Client(project=settings.GCS_PROJECT_ID)
@@ -77,9 +83,9 @@ def _get_bucket():
 
 
 def _sync_upload(file_bytes: bytes, filename: str, folder: str) -> str:
-    safe_name   = Path(filename).name.replace(" ", "_")[:100]
+    safe_name = Path(filename).name.replace(" ", "_")[:100]
     unique_name = f"{uuid.uuid4().hex}_{safe_name}"
-    blob_path   = f"{settings.GCS_BUCKET_PREFIX}/attachments/{folder}/{unique_name}"
+    blob_path = f"{settings.GCS_BUCKET_PREFIX}/attachments/{folder}/{unique_name}"
     blob = _get_bucket().blob(blob_path)
     blob.upload_from_string(file_bytes, content_type="application/octet-stream")
     logger.info(f"GCS upload: {blob_path}")
@@ -108,7 +114,7 @@ def _sync_signed_url(blob_path: str, expiry_minutes: int) -> str:
             )
         except DefaultCredentialsError as cred_err:
             raise GCSUnavailable(
-                f"ADC not found — set GOOGLE_APPLICATION_CREDENTIALS. Original: {cred_err}"
+                f"ADC not found — set GOOGLE_APPLICATION_CREDENTIALS. Original: {cred_err}"  # noqa: E501
             ) from cred_err
 
         source_credentials.refresh(google.auth.transport.requests.Request())
@@ -122,10 +128,10 @@ def _sync_signed_url(blob_path: str, expiry_minutes: int) -> str:
                 lifetime=300,
             )
         else:
-            signing_credentials = source_credentials
+            signing_credentials = source_credentials  # type: ignore
 
         blob = _get_bucket().blob(blob_path)
-        url  = blob.generate_signed_url(
+        url = blob.generate_signed_url(
             expiration=datetime.timedelta(minutes=expiry_minutes),
             method="GET",
             credentials=signing_credentials,
@@ -143,6 +149,7 @@ def _sync_signed_url(blob_path: str, expiry_minutes: int) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 # Synchronous public API  (for Celery workers / non-async callers)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def upload_attachment(file_bytes: bytes, filename: str, folder: str) -> str:
     """Sync upload — raises GCSUnavailable on failure."""
@@ -169,6 +176,7 @@ def get_public_url(blob_path: str) -> str:
 # All blocking I/O is offloaded to a thread pool via run_in_executor so the
 # event loop is never blocked by a GCS network call.
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 async def async_upload_attachment(file_bytes: bytes, filename: str, folder: str) -> str:
     """

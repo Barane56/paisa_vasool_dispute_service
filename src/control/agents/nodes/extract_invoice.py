@@ -3,25 +3,25 @@ src/control/agents/nodes/extract_invoice.py
 """
 
 from __future__ import annotations
-import logging
-from typing import Optional, List, Dict
 
-from src.observability import observe, langfuse_context
-from src.control.agents.state import EmailProcessingState
+import logging
+
 from src.control.agents.nodes.extract_text import _regex_invoice_numbers
+from src.control.agents.state import EmailProcessingState
+from src.observability import langfuse_context, observe
 
 logger = logging.getLogger(__name__)
 
 # Maps groq_extracted field names → ar_document_key key_type values
-_REF_FIELD_TO_KEY_TYPE: Dict[str, str] = {
-    "po_number":       "po_number",
-    "grn_number":      "grn_number",
-    "payment_ref":     "payment_ref",
+_REF_FIELD_TO_KEY_TYPE: dict[str, str] = {
+    "po_number": "po_number",
+    "grn_number": "grn_number",
+    "payment_ref": "payment_ref",
     "contract_number": "contract_number",
 }
 
 
-def _parse_invoice_list(raw: dict) -> List[Dict]:
+def _parse_invoice_list(raw: dict) -> list[dict]:
     """
     Parse the LLM response into a list of invoice dicts.
 
@@ -50,9 +50,9 @@ def _parse_invoice_list(raw: dict) -> List[Dict]:
 async def node_extract_invoice_data_via_groq(
     state: EmailProcessingState, llm_client=None
 ) -> EmailProcessingState:
-    groq_extracted: Optional[Dict] = None
-    candidates:           List[str]  = []
-    candidate_references: List[Dict] = []
+    groq_extracted: dict | None = None
+    candidates: list[str] = []
+    candidate_references: list[dict] = []
 
     if llm_client:
         try:
@@ -89,7 +89,9 @@ async def node_extract_invoice_data_via_groq(
                         ref_key = ("po_number", po)
                         if ref_key not in seen_ref:
                             seen_ref.add(ref_key)
-                            candidate_references.append({"value": po, "key_type": "po_number"})
+                            candidate_references.append(
+                                {"value": po, "key_type": "po_number"}
+                            )
 
                     # ── Other AR references ────────────────────────────────────
                     for field, key_type in _REF_FIELD_TO_KEY_TYPE.items():
@@ -100,13 +102,17 @@ async def node_extract_invoice_data_via_groq(
                             ref_key = (key_type, raw_val)
                             if ref_key not in seen_ref:
                                 seen_ref.add(ref_key)
-                                candidate_references.append({"value": raw_val, "key_type": key_type})
+                                candidate_references.append(
+                                    {"value": raw_val, "key_type": key_type}
+                                )
 
                 langfuse_context.update_current_observation(
                     input={"text_length": len(state["all_text"])},
                     output={
-                        "invoice_count":  len(invoice_list),
-                        "invoice_numbers": [inv.get("invoice_number") for inv in invoice_list],
+                        "invoice_count": len(invoice_list),
+                        "invoice_numbers": [
+                            inv.get("invoice_number") for inv in invoice_list
+                        ],
                     },
                 )
                 logger.info(
@@ -116,7 +122,7 @@ async def node_extract_invoice_data_via_groq(
                 )
             else:
                 logger.warning(
-                    f"[email_id={state['email_id']}] Invoice extraction returned no invoices."
+                    f"[email_id={state['email_id']}] Invoice extraction returned no invoices."  # noqa: E501
                 )
 
         except Exception as e:
@@ -137,8 +143,7 @@ async def node_extract_invoice_data_via_groq(
 
     return {
         **state,
-        "groq_extracted":            groq_extracted,
+        "groq_extracted": groq_extracted,
         "candidate_invoice_numbers": candidates,
-        "candidate_references":      candidate_references,
+        "candidate_references": candidate_references,
     }
-

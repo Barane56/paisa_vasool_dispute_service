@@ -14,24 +14,26 @@ Usage (programmatic):
     from src.data.migrations.runner import run_upgrade
     await run_upgrade()
 """
+
 import asyncio
 import logging
 import sys
 from pathlib import Path
 
-import asyncpg
+import asyncpg  # type: ignore
 
 from src.config.settings import get_settings
 
-logger   = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 _MIGRATIONS_DIR = Path(__file__).parent / "v1"
-_VERSIONS_DIR   = _MIGRATIONS_DIR / "versions"
-_BOOTSTRAP_SQL  = _MIGRATIONS_DIR / "0000_bootstrap.sql"
+_VERSIONS_DIR = _MIGRATIONS_DIR / "versions"
+_BOOTSTRAP_SQL = _MIGRATIONS_DIR / "0000_bootstrap.sql"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def _get_sql_files() -> list[Path]:
     """Return all version SQL files sorted lexicographically."""
@@ -39,7 +41,7 @@ def _get_sql_files() -> list[Path]:
 
 
 def _version_from_path(path: Path) -> str:
-    """Extract version key from filename e.g. '0001_initial_schema' from '0001_initial_schema.sql'."""
+    """Extract version key from filename e.g. '0001_initial_schema' from '0001_initial_schema.sql'."""  # noqa: E501
     return path.stem
 
 
@@ -70,9 +72,9 @@ async def _get_applied_versions(conn: asyncpg.Connection) -> set[str]:
 
 async def _apply_migration(conn: asyncpg.Connection, path: Path) -> None:
     """Apply a single SQL file inside a transaction. Rolls back on any error."""
-    version     = _version_from_path(path)
+    version = _version_from_path(path)
     description = _description_from_path(path)
-    sql         = path.read_text(encoding="utf-8")
+    sql = path.read_text(encoding="utf-8")
 
     logger.info("Applying migration: %s", version)
 
@@ -88,6 +90,7 @@ async def _apply_migration(conn: asyncpg.Connection, path: Path) -> None:
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
+
 
 async def run_upgrade() -> None:
     """Apply all pending migrations in order."""
@@ -126,7 +129,7 @@ async def run_status() -> None:
             print("  No migration files found.")
         for path in all_files:
             version = _version_from_path(path)
-            mark    = "✓ applied" if version in applied else "✗ pending"
+            mark = "✓ applied" if version in applied else "✗ pending"
             print(f"  [{mark}]  {version}")
         print()
 
@@ -148,19 +151,22 @@ async def run_applied() -> None:
     try:
         await _bootstrap(conn)
         rows = await conn.fetch(
-            "SELECT version, description, applied_at FROM schema_migrations ORDER BY version"
+            "SELECT version, description, applied_at FROM schema_migrations ORDER BY version"  # noqa: E501
         )
         print("\n── Applied Migrations ────────────────────────────")
         if not rows:
             print("  None yet.")
         for row in rows:
-            print(f"  {row['version']}  |  {row['applied_at'].strftime('%Y-%m-%d %H:%M:%S')}  |  {row['description']}")
+            print(
+                f"  {row['version']}  |  {row['applied_at'].strftime('%Y-%m-%d %H:%M:%S')}  |  {row['description']}"  # noqa: E501
+            )
         print()
     finally:
         await conn.close()
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
+
 
 def _usage() -> None:
     print(

@@ -4,39 +4,49 @@ src/core/services/outbound_email_service.py
 Orchestrates composing and sending emails on behalf of an FA via the
 dispute's mailbox. Stores a full audit record with threading headers.
 """
+
 from __future__ import annotations
 
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import List, Optional
 
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import settings
-from src.core.exceptions.errors import ResourceNotFoundError, ValidationError as PVValidationError
-from src.core.services.imap_service import decode_password
+from src.core.exceptions.errors import ResourceNotFoundError
+from src.core.exceptions.errors import ValidationError as PVValidationError
 from src.core.services.smtp_service import (
-    generate_message_id, build_references_chain, send_email, test_smtp_connection,
+    build_references_chain,
+    generate_message_id,
+    send_email,
+    test_smtp_connection,
 )
 from src.data.models.postgres.mailbox_models import (
-    OutboundEmail, OutboundEmailAttachment, EmailInboxMessage,
+    EmailInboxMessage,
+    OutboundEmail,
+    OutboundEmailAttachment,
 )
 from src.data.repositories.mailbox_repository import (
-    MailboxRepository, EmailInboxMessageRepository,
+    EmailInboxMessageRepository,
+    MailboxRepository,
 )
 from src.data.repositories.repositories import DisputeRepository
 
 logger = logging.getLogger(__name__)
 
-ATTACHMENT_STORAGE_DIR = Path(getattr(settings, "ATTACHMENT_STORAGE_DIR", "/tmp/dispute_attachments"))
+ATTACHMENT_STORAGE_DIR = Path(
+    getattr(settings, "ATTACHMENT_STORAGE_DIR", "/tmp/dispute_attachments")
+)
 OUTBOUND_SUBDIR = ATTACHMENT_STORAGE_DIR / "outbound"
 OUTBOUND_SUBDIR.mkdir(parents=True, exist_ok=True)
 
-from src.core.services.gcs_service import async_upload_attachment as _gcs_upload, get_public_url as _gcs_url, GCSUnavailable
+from src.core.services.gcs_service import (  # noqa: E402
+    async_upload_attachment as _gcs_upload,  # noqa: E402
+)
 
 
 def _safe_filename(name: str) -> str:
@@ -45,14 +55,14 @@ def _safe_filename(name: str) -> str:
 
 class OutboundEmailService:
     def __init__(self, db: AsyncSession):
-        self.db          = db
-        self.mb_repo     = MailboxRepository(db)
-        self.msg_repo    = EmailInboxMessageRepository(db)
-        self.disp_repo   = DisputeRepository(db)
+        self.db = db
+        self.mb_repo = MailboxRepository(db)
+        self.msg_repo = EmailInboxMessageRepository(db)
+        self.disp_repo = DisputeRepository(db)
 
     # ── Find the last inbound message for threading ───────────────────────────
 
-    async def _get_last_inbound_message_id(self, dispute_id: int) -> Optional[int]:
+    async def _get_last_inbound_message_id(self, dispute_id: int) -> int | None:
         """
         Returns the message_id of the most recent INBOUND EmailInboxMessage
         linked to this dispute — either directly via EmailInboxMessage.dispute_id
@@ -62,7 +72,7 @@ class OutboundEmailService:
         same thread in the customer's inbox.
         """
         from sqlalchemy import select
-        from src.data.models.postgres.mailbox_models import EmailInboxMessage
+
         from src.data.models.postgres.models import EmailInbox
 
         # Primary lookup: direct dispute_id on EmailInboxMessage
@@ -80,7 +90,7 @@ class OutboundEmailService:
             return row[0]
 
         # Fallback: find via legacy EmailInbox.dispute_id → email_inbox_id join
-        # Handles cases where dispute_id is on EmailInbox but not yet on EmailInboxMessage
+        # Handles cases where dispute_id is on EmailInbox but not yet on EmailInboxMessage  # noqa: E501
         result2 = await self.db.execute(
             select(EmailInboxMessage.message_id)
             .join(EmailInbox, EmailInbox.email_id == EmailInboxMessage.email_inbox_id)
@@ -102,7 +112,6 @@ class OutboundEmailService:
         Falls back to the first active mailbox if not determinable.
         """
         from sqlalchemy import select
-        from src.data.models.postgres.mailbox_models import EmailInboxMessage
 
         # Try to find the inbound message linked to this dispute
         result = await self.db.execute(
@@ -114,29 +123,34 @@ class OutboundEmailService:
         )
         inbound = result.scalar_one_or_none()
         if inbound and inbound.mailbox_id:
-            mb = await self.mb_repo.get_by_id(inbound.mailbox_id)
+            mb = await self.mb_repo.get_by_id(inbound.mailbox_id)  # type: ignore
             if mb and mb.is_active:
                 return mb
 
         # Fallback: first active mailbox
         mailboxes = await self.mb_repo.list_active_for_polling()
         if not mailboxes:
-            raise PVValidationError("No active mailbox configured. Add a mailbox before sending.")
+            raise PVValidationError(
+                "No active mailbox configured. Add a mailbox before sending."
+            )
         return mailboxes[0]
 
     # ── Save uploaded attachment files ────────────────────────────────────────
 
     async def _save_upload(self, file: UploadFile, outbound_id: int) -> dict:
-        safe_name   = _safe_filename(file.filename or "attachment")
-        file_bytes  = await file.read()
-        ext         = Path(file.filename or "").suffix.lower().lstrip(".") or "bin"
+        safe_name = _safe_filename(file.filename or "attachment")
+        file_bytes = await file.read()
+        ext = Path(file.filename or "").suffix.lower().lstrip(".") or "bin"
 
         blob_path: str
 
         if settings.GCS_ENABLED:
             try:
-                blob_path = await _gcs_upload(file_bytes, file.filename or safe_name,
-                                        folder=f"outbound/dispute_{outbound_id}")
+                blob_path = await _gcs_upload(
+                    file_bytes,
+                    file.filename or safe_name,
+                    folder=f"outbound/dispute_{outbound_id}",
+                )
             except Exception as gcs_err:
                 logger.warning(
                     f"GCS upload failed for outbound {outbound_id}, "
@@ -169,20 +183,20 @@ class OutboundEmailService:
     async def compose_and_send(
         self,
         *,
-        dispute_id:          int,
-        sent_by_user_id:     Optional[int],
-        to_email:            str,
-        subject:             str,
-        body_html:           str,
-        body_text:           str,
-        reply_to_message_id: Optional[int] = None,
-        force_new_thread:    bool = False,
-        attachments:         Optional[List[UploadFile]] = None,
+        dispute_id: int,
+        sent_by_user_id: int | None,
+        to_email: str,
+        subject: str,
+        body_html: str,
+        body_text: str,
+        reply_to_message_id: int | None = None,
+        force_new_thread: bool = False,
+        attachments: list[UploadFile] | None = None,
         # Optional override for AI-agent sends — uses dedicated agent SMTP
         # credentials instead of the mailbox credentials.
         # Pass a dict with keys: smtp_host, smtp_port, smtp_use_tls,
         # username, password_enc, from_address.
-        override_smtp_credentials: Optional[dict] = None,
+        override_smtp_credentials: dict | None = None,
     ) -> OutboundEmail:
         """
         Compose an email, save it, upload attachments, then send via SMTP.
@@ -203,8 +217,8 @@ class OutboundEmailService:
         if not force_new_thread and reply_to_message_id is None:
             reply_to_message_id = await self._get_last_inbound_message_id(dispute_id)
 
-        in_reply_to_header: Optional[str] = None
-        references_header:  Optional[str] = None
+        in_reply_to_header: str | None = None
+        references_header: str | None = None
 
         if reply_to_message_id:
             orig = await self.msg_repo.get_by_id(reply_to_message_id)
@@ -216,7 +230,11 @@ class OutboundEmailService:
                 # so we can still thread correctly.
                 if not msg_id:
                     from sqlalchemy import select as _sa_select
-                    from src.data.models.postgres.mailbox_models import OutboundEmail as _OB
+
+                    from src.data.models.postgres.mailbox_models import (
+                        OutboundEmail as _OB,  # noqa: N814
+                    )
+
                     _ob_row = await self.db.execute(
                         _sa_select(_OB.message_id_header)
                         .where(
@@ -228,13 +246,13 @@ class OutboundEmailService:
                         .limit(1)
                     )
                     _ob = _ob_row.first()
-                    msg_id = _ob[0] if _ob else None
+                    msg_id = _ob[0] if _ob else None  # type: ignore
 
                 if msg_id:
-                    in_reply_to_header = msg_id
-                    references_header  = build_references_chain(
-                        in_reply_to_message_id=msg_id,
-                        parent_references=orig.references_header,
+                    in_reply_to_header = msg_id  # type: ignore
+                    references_header = build_references_chain(
+                        in_reply_to_message_id=msg_id,  # type: ignore
+                        parent_references=orig.references_header,  # type: ignore
                     )
 
         # 4. Generate our Message-ID
@@ -266,11 +284,11 @@ class OutboundEmailService:
         await self.db.flush()  # get outbound_id for attachment paths
 
         # 6. Save attachments
-        att_paths: List[tuple] = []
-        for file in (attachments or []):
+        att_paths: list[tuple] = []
+        for file in attachments or []:
             if not file.filename:
                 continue
-            att_info = await self._save_upload(file, outbound.outbound_id)
+            att_info = await self._save_upload(file, outbound.outbound_id)  # type: ignore
             att = OutboundEmailAttachment(
                 outbound_id=outbound.outbound_id,
                 file_name=att_info["file_name"],
@@ -287,19 +305,19 @@ class OutboundEmailService:
         # If override credentials are provided (AI-agent auto-responses), use
         # them; otherwise fall back to the mailbox's own credentials.
         if override_smtp_credentials:
-            smtp_host    = override_smtp_credentials["smtp_host"]
-            smtp_port    = override_smtp_credentials["smtp_port"]
+            smtp_host = override_smtp_credentials["smtp_host"]
+            smtp_port = override_smtp_credentials["smtp_port"]
             smtp_use_tls = override_smtp_credentials["smtp_use_tls"]
-            smtp_user    = override_smtp_credentials["username"]
-            smtp_pass    = override_smtp_credentials["password_enc"]
-            smtp_from    = override_smtp_credentials["from_address"]
+            smtp_user = override_smtp_credentials["username"]
+            smtp_pass = override_smtp_credentials["password_enc"]
+            smtp_from = override_smtp_credentials["from_address"]
         else:
-            smtp_host    = mb.effective_smtp_host
-            smtp_port    = mb.smtp_port
+            smtp_host = mb.effective_smtp_host
+            smtp_port = mb.smtp_port
             smtp_use_tls = mb.smtp_use_tls
-            smtp_user    = mb.email_address
-            smtp_pass    = mb.password_enc
-            smtp_from    = mb.email_address
+            smtp_user = mb.email_address
+            smtp_pass = mb.password_enc
+            smtp_from = mb.email_address
 
         try:
             send_email(
@@ -318,19 +336,22 @@ class OutboundEmailService:
                 references=references_header,
                 attachment_paths=att_paths,
             )
-            outbound.status  = "SENT"
-            outbound.sent_at = datetime.now(timezone.utc)
+            outbound.status = "SENT"  # type: ignore
+            outbound.sent_at = datetime.now(UTC)  # type: ignore
             logger.info(f"Outbound email sent dispute_id={dispute_id} to={to_email}")
         except Exception as e:
-            outbound.status         = "FAILED"
-            outbound.failure_reason = str(e)
-            logger.error(f"Failed sending email dispute_id={dispute_id}: {e}", exc_info=True)
+            outbound.status = "FAILED"  # type: ignore
+            outbound.failure_reason = str(e)  # type: ignore
+            logger.error(
+                f"Failed sending email dispute_id={dispute_id}: {e}", exc_info=True
+            )
 
         # Write a FA_REPLY episode only for human sends so it appears on the
         # timeline. AI auto-response episodes are written by persist_results
         # to avoid double-counting.
         if sent_by_user_id is not None:
             from src.data.models.postgres.memory_models import DisputeMemoryEpisode
+
             episode = DisputeMemoryEpisode(
                 dispute_id=dispute_id,
                 episode_type="FA_REPLY",
@@ -344,7 +365,8 @@ class OutboundEmailService:
         # Reload with relationships eagerly so Pydantic serialisation never
         # hits a lazy-load outside the async greenlet
         from sqlalchemy import select as sa_select
-        from sqlalchemy.orm import selectinload, joinedload
+        from sqlalchemy.orm import joinedload, selectinload
+
         result = await self.db.execute(
             sa_select(OutboundEmail)
             .options(
@@ -357,9 +379,10 @@ class OutboundEmailService:
 
     # ── List outbound for a dispute ───────────────────────────────────────────
 
-    async def list_for_dispute(self, dispute_id: int) -> List[OutboundEmail]:
+    async def list_for_dispute(self, dispute_id: int) -> list[OutboundEmail]:
         from sqlalchemy import select
-        from sqlalchemy.orm import selectinload, joinedload
+        from sqlalchemy.orm import joinedload, selectinload
+
         result = await self.db.execute(
             select(OutboundEmail)
             .options(
@@ -375,9 +398,11 @@ class OutboundEmailService:
 
     async def get_attachment(self, attachment_id: int) -> OutboundEmailAttachment:
         from sqlalchemy import select
+
         result = await self.db.execute(
-            select(OutboundEmailAttachment)
-            .where(OutboundEmailAttachment.attachment_id == attachment_id)
+            select(OutboundEmailAttachment).where(
+                OutboundEmailAttachment.attachment_id == attachment_id
+            )
         )
         att = result.scalar_one_or_none()
         if not att:
@@ -392,9 +417,9 @@ class OutboundEmailService:
             raise ResourceNotFoundError("MailboxCredential", mailbox_id)
         ok, msg = test_smtp_connection(
             smtp_host=mb.effective_smtp_host,
-            smtp_port=mb.smtp_port,
-            smtp_use_tls=mb.smtp_use_tls,
-            username=mb.email_address,
-            password_enc=mb.password_enc,
+            smtp_port=mb.smtp_port,  # type: ignore
+            smtp_use_tls=mb.smtp_use_tls,  # type: ignore
+            username=mb.email_address,  # type: ignore
+            password_enc=mb.password_enc,  # type: ignore
         )
         return {"success": ok, "message": msg}

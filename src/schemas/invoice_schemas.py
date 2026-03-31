@@ -1,7 +1,8 @@
 # invoice_schemas.py — Invoice and Payment Pydantic schemas
-from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, List, Any
+from typing import Any
+
+from pydantic import BaseModel
 
 
 class InvoiceResponse(BaseModel):
@@ -15,7 +16,7 @@ class InvoiceResponse(BaseModel):
 
 class InvoiceListResponse(BaseModel):
     total: int
-    items: List[InvoiceResponse]
+    items: list[InvoiceResponse]
 
 
 class InvoiceUploadResponse(BaseModel):
@@ -30,17 +31,17 @@ class PaymentDetailResponse(BaseModel):
     customer_id: str
     invoice_number: str
     payment_url: str
-    payment_details: Optional[Any] = None
+    payment_details: Any | None = None
     model_config = {"from_attributes": True}
 
 
 class PaymentDetailListResponse(BaseModel):
     invoice_number: str
     total: int
-    items: List[PaymentDetailResponse]
+    items: list[PaymentDetailResponse]
 
 
 class CustomerPaymentListResponse(BaseModel):
     customer_id: str
     total: int
-    items: List[PaymentDetailResponse]
+    items: list[PaymentDetailResponse]

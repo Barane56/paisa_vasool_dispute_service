@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
 
-from src.data.clients.postgres import get_db
-from src.core.services.invoice_service import InvoiceService
 from src.api.rest.dependencies import get_current_user
-from src.schemas.schemas import (
-    CurrentUser, InvoiceResponse, InvoiceListResponse, InvoiceUploadResponse,
+from src.core.services.invoice_service import InvoiceService
+from src.data.clients.postgres import get_db
+from src.schemas.schemas import (  # type: ignore
+    CurrentUser,
+    InvoiceListResponse,
+    InvoiceResponse,
+    InvoiceUploadResponse,
 )
 
 router = APIRouter(prefix="/invoices", tags=["Invoices"])
@@ -15,7 +17,9 @@ router = APIRouter(prefix="/invoices", tags=["Invoices"])
 @router.post("/upload", response_model=InvoiceUploadResponse)
 async def upload_invoice(
     file: UploadFile = File(..., description="Invoice PDF"),
-    invoice_url: str = Form(..., description="Public URL or storage path for this invoice"),
+    invoice_url: str = Form(
+        ..., description="Public URL or storage path for this invoice"
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -33,7 +37,7 @@ async def upload_invoice(
     service = InvoiceService(db)
     return await service.upload_and_extract(
         file_bytes=file_bytes,
-        file_name=file.filename,
+        file_name=file.filename,  # type: ignore
         invoice_url=invoice_url,
     )
 
@@ -54,9 +58,11 @@ async def list_invoices(
 @router.get("/by-number/{invoice_number}", response_model=InvoiceResponse)
 async def get_invoice_by_number(
     invoice_number: str,
-    customer_email: str | None = Query(None, description="FA customer email — enforces ownership check"),
-    db: AsyncSession             = Depends(get_db),
-    current_user: CurrentUser    = Depends(get_current_user),
+    customer_email: str | None = Query(
+        None, description="FA customer email — enforces ownership check"
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     """
     Look up an invoice by its invoice number.
@@ -67,9 +73,8 @@ async def get_invoice_by_number(
     This prevents FAs from accidentally anchoring a dispute to an invoice that
     belongs to a different customer.
     """
-    from src.data.repositories.invoice_repository import PaymentRepository
     from src.control.agents.nodes.identify_invoice import _check_invoice_ownership
-    from fastapi import HTTPException
+    from src.data.repositories.invoice_repository import PaymentRepository
 
     service = InvoiceService(db)
     invoice = await service.get_by_number(invoice_number)
@@ -80,12 +85,12 @@ async def get_invoice_by_number(
 
     # Verify the invoice belongs to the given customer_email / their domain
     pay_repo = PaymentRepository(db)
-    payments = await pay_repo.get_all_by_invoice_number(invoice.invoice_number)
+    payments = await pay_repo.get_all_by_invoice_number(invoice.invoice_number)  # type: ignore
     invoice_customer_id = payments[0].customer_id if payments else None
 
     if invoice_customer_id:
         is_verified, reason = _check_invoice_ownership(
-            invoice_customer_id=invoice_customer_id,
+            invoice_customer_id=invoice_customer_id,  # type: ignore
             sender_email=customer_email,
         )
         if not is_verified:
