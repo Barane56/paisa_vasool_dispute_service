@@ -134,6 +134,7 @@ def _sync_signed_url(blob_path: str, expiry_minutes: int) -> str:
         url = blob.generate_signed_url(
             expiration=datetime.timedelta(minutes=expiry_minutes),
             method="GET",
+            response_disposition=f'inline; filename="{Path(blob_path).name}"',
             credentials=signing_credentials,
             version="v4",
         )

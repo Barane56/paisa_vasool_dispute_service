@@ -89,50 +89,34 @@ async def download_ar_document(
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> Any:
-    """
-    Serve the raw file for an AR document.
-
-    Storage routing (mirrors dispute_document_service):
-      - GCS-stored + ADC available  → 302 redirect to a 30-minute signed URL
-      - GCS-stored + no ADC         → stream bytes directly from GCS
-      - Local-stored                → stream bytes from disk
-
-    mode=view → Content-Disposition: inline  (browser renders PDF/images in-tab)
-    mode=save → Content-Disposition: attachment  (force download)
-    """
     import io
     import mimetypes
 
     from fastapi import HTTPException
-    from fastapi.responses import RedirectResponse, StreamingResponse
+    from fastapi.responses import StreamingResponse
 
     svc = ARDocumentService(db)
 
-    # ── Try GCS signed URL first (cheapest path for GCS-stored files) ────────
-    try:
-        signed_url = await svc.get_signed_url_if_gcs(doc_id, expiry_minutes=30)
-    except ValueError:
-        raise HTTPException(status_code=404, detail=f"AR document {doc_id} not found")  # noqa: B904
-
-    if signed_url:
-        # GCS + ADC available: redirect, browser fetches directly from GCS
-        return RedirectResponse(url=signed_url, status_code=302)
-
-    # ── Stream bytes (GCS without ADC, or local storage) ─────────────────────
     try:
         file_bytes, filename = await svc.get_file_bytes(doc_id)
-    except ValueError:
-        raise HTTPException(status_code=404, detail=f"AR document {doc_id} not found")  # noqa: B904
+    except ValueError as e:
+        raise HTTPException(
+            status_code=404,
+            detail=f"AR document {doc_id} not found",
+        ) from e
     except FileNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))  # noqa: B904
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
-    media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     disposition = "inline" if mode == "view" else "attachment"
 
     return StreamingResponse(
         content=io.BytesIO(file_bytes),
-        media_type=media_type,
-        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
+        media_type=mime,
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{filename}"',
+            "Content-Length": str(len(file_bytes)),
+        },
     )
 
 

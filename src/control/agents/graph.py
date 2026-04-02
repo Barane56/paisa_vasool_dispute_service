@@ -39,6 +39,8 @@ from src.control.agents.nodes import (
     node_classify_email,
     node_detect_context_shift,
     node_embed_and_search,
+    node_enhanced_verify,
+    node_execute_tools,
     node_extract_invoice_data_via_groq,
     node_extract_text,
     node_fetch_context,
@@ -48,6 +50,7 @@ from src.control.agents.nodes import (
     node_pre_fetch_dispute_context,
     node_resolve_dispute_link,
     node_resolve_token,
+    node_verify_claim,
 )
 from src.control.agents.state import EmailProcessingState, build_initial_state
 from src.observability import langfuse_context, observe
@@ -93,6 +96,18 @@ def build_email_processing_graph(db_session=None, llm_client=None):
         partial(node_generate_ai_response, llm_client=llm_client),
     )
     graph.add_node(
+        "verify_claim",
+        partial(node_verify_claim, db_session=db_session),
+    )
+    graph.add_node(
+        "enhanced_verify",
+        partial(node_enhanced_verify, db_session=db_session, llm_client=llm_client),
+    )
+    graph.add_node(
+        "execute_tools",
+        partial(node_execute_tools, db_session=db_session),
+    )
+    graph.add_node(
         "persist_results", partial(node_persist_results, db_session=db_session)
     )
 
@@ -107,7 +122,10 @@ def build_email_processing_graph(db_session=None, llm_client=None):
     graph.add_edge("embed_and_search", "detect_context_shift")
     graph.add_edge("detect_context_shift", "resolve_dispute_link")
     graph.add_edge("resolve_dispute_link", "generate_ai_response")
-    graph.add_edge("generate_ai_response", "persist_results")
+    graph.add_edge("generate_ai_response", "verify_claim")
+    graph.add_edge("verify_claim", "enhanced_verify")
+    graph.add_edge("enhanced_verify", "execute_tools")
+    graph.add_edge("execute_tools", "persist_results")
     graph.add_edge("persist_results", END)
 
     return graph.compile()

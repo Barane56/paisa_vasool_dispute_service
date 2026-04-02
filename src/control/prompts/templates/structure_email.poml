@@ -223,7 +223,7 @@
   {
     "classification":     "DISPUTE" or "CLARIFICATION",
     "intent":             "one intent from the list above",
-    "description":        "short customer-facing clause",
+    "description":        "short customer-facing clause, dont start as your concern regarding, instead start with Customer is ... like that",
     "invoice_number":     "INV-XXXX or null",
     "document_reference": "PO-XXXX or GRN-XXXX or null",
     "document_reference_type": "po_number|grn_number|payment_ref|contract_number|credit_note_number or null",

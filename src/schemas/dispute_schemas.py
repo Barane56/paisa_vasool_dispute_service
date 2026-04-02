@@ -232,3 +232,27 @@ class DisputeDocumentListResponse(BaseModel):
     dispute_id: int
     total: int
     items: list[DisputeDocumentResponse]
+
+
+# ── AR Document Graph Anchors ────────────────────────────────────────────────
+
+
+class AnchorUpdateRequest(BaseModel):
+    doc_id: int
+    customer_email: str | None = Field(
+        None, description="Scope override; defaults to dispute.customer_email"
+    )
+
+
+# ── Fork Recommendations ─────────────────────────────────────────────────────
+
+
+class ForkRecommendationAction(BaseModel):
+    action: str = Field(..., pattern="^(ACCEPT|DISMISS)$")
+    dispute_type_id: int | None = None
+    custom_type_name: str | None = None
+    custom_type_desc: str | None = None
+    description: str | None = None
+    priority: str = Field("MEDIUM", pattern="^(LOW|MEDIUM|HIGH)$")
+    customer_email: str | None = None
+    ar_document_id: int | None = None

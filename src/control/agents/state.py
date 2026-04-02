@@ -125,6 +125,31 @@ class EmailProcessingState(TypedDict):
     memory_context_used: bool
     episodes_referenced: list[int]
 
+    # ── Verification fields (industry standard) ─────────────────────────────
+    claim_type: str  # PRICING, PAYMENT, CONTRACT, DUPLICATE, DELIVERY, OTHER
+    verification_status: (
+        str  # VERIFIED_CUSTOMER_CORRECT, VERIFIED_CUSTOMER_INCORRECT, INCONCLUSIVE
+    )
+    verification_evidence: str  # What data was checked
+    resolution_action: str  # ISSUE_CREDIT, REISSUE_INVOICE, NO_ACTION,
+    # INVESTIGATE_PAYMENT, REQUEST_CONTRACT_COPY
+    ar_docs_for_verification: list[dict[str, Any]]  # Docs found during verification
+
+    # ── Tool proposals and receipts (industry standard) ────────────────────
+    tool_proposals: list[dict[str, Any]]  # LLM-suggested tool calls
+    tool_receipts: list[dict[str, Any]]  # Execution results with receipts
+    executed_tool_count: int  # Number of tools executed
+
+    # Policy claims for compliance ──────────────────────────────────────────
+    cited_policy_claims: list[str]  # claim_ids used in response
+
+    # Enhanced verification results ─────────────────────────────────────────
+    contract_extraction: dict[str, Any] | None  # LLM-extracted contract rates
+    credit_note_check: dict[str, Any] | None  # Credit note lookup result
+    po_grn_match: dict[str, Any] | None  # PO-GRN matching result
+    fa_suggestion: dict[str, Any] | None  # Enhanced FA action suggestion
+    should_escalate: bool  # Override based on confidence threshold
+
     #   issue_index, invoice_number, classification, description,
     #   ai_response, can_auto_respond, ai_summary, confidence_score,
     #   questions_to_ask, dispute_token (placeholder resolved by persist_results)
@@ -218,6 +243,20 @@ def build_initial_state(
         "questions_to_ask": [],
         "memory_context_used": False,
         "episodes_referenced": [],
+        "claim_type": "",
+        "verification_status": "",
+        "verification_evidence": "",
+        "resolution_action": "",
+        "ar_docs_for_verification": [],
+        "tool_proposals": [],
+        "tool_receipts": [],
+        "executed_tool_count": 0,
+        "cited_policy_claims": [],
+        "contract_extraction": None,
+        "credit_note_check": None,
+        "po_grn_match": None,
+        "fa_suggestion": None,
+        "should_escalate": False,
         "per_issue_responses": [],
         "dispute_id": None,
         "forked_dispute_ids": [],

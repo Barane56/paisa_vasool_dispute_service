@@ -144,13 +144,10 @@ class DisputeDocumentService:
         - Local-stored: always returns API streaming endpoint
         """
         if doc.file_path.startswith(GCS_PREFIX):
-            gcs_path = doc.file_path.removeprefix(GCS_PREFIX)
             try:
-                from src.core.services.gcs_service import (
-                    async_get_signed_url,
-                )
-
-                return await async_get_signed_url(gcs_path, expiry_minutes=30)
+                return f"/dispute/api/v1/disputes/{doc.dispute_id}/documents/{doc.document_id}/download"  # noqa: E501
+                # files will be proxied from our server , we dont need excess signed url
+                # return await async_get_signed_url(gcs_path, expiry_minutes=30)
             except Exception as exc:
                 logger.warning(
                     f"Signed URL unavailable for doc {doc.document_id} "

@@ -5,18 +5,9 @@ Thin route layer — all business/query logic lives in DisputeService.
 Routes only handle HTTP concerns: extract params, call service, return response.
 """
 
-from typing import (  # type: ignore
-    Any,
-    APIRouter,
-    Depends,
-    File,
-    Form,
-    Query,
-    UploadFile,
-    status,
-)
+from typing import Any
 
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.rest.dependencies import get_current_user
@@ -24,8 +15,9 @@ from src.core.services.dispute_document_service import DisputeDocumentService
 from src.core.services.dispute_service import DisputeService
 from src.core.services.draft_email_service import generate_draft_email
 from src.data.clients.postgres import get_db
-from src.schemas.schemas import (  # type: ignore
+from src.schemas.schemas import (
     AIAnalysisResponse,
+    AnchorUpdateRequest,
     CurrentUser,
     DisputeAssignRequest,
     DisputeDetailResponse,
@@ -36,6 +28,7 @@ from src.schemas.schemas import (  # type: ignore
     DisputeTimelineResponse,
     DraftEmailResponse,
     FADisputeCreate,
+    ForkRecommendationAction,
     MemorySummaryResponse,
     OpenQuestionResponse,
     QuestionStatusUpdate,
@@ -462,23 +455,16 @@ async def list_dispute_documents(
     )
 
 
-@router.get("/{dispute_id}/documents/{document_id}/download")  # type: ignore[untyped-decorator]
+@router.get("/{dispute_id}/documents/{document_id}/download")
 async def download_dispute_document(
     dispute_id: int,
     document_id: int,
     mode: str = Query(
-        "save", description="'view' to open inline, 'save' to force download"
+        "view", description="'view' to open inline, 'save' to force download"
     ),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> Any:
-    """
-    Serve a supporting document.
-    mode=view  → Content-Disposition: inline  (browser renders PDF/image in tab)
-    mode=save  → Content-Disposition: attachment  (browser downloads)
-    - GCS: try signed URL redirect first, fall back to byte streaming
-    - Local: always stream bytes directly
-    """
     import io
     import mimetypes
 
@@ -493,30 +479,14 @@ async def download_dispute_document(
             status_code=404, detail="Document not found for this dispute"
         )
 
-    disposition = "inline" if mode == "view" else "attachment"
-
-    # Resolve MIME type — stored file_type may be wrong or octet-stream
     mime = doc.file_type or "application/octet-stream"
     if mime == "application/octet-stream":
         guessed, _ = mimetypes.guess_type(doc.file_name)
         if guessed:
             mime = guessed
 
-    # Try signed URL for GCS paths (signed URLs always force download in browser)
-    # For view mode we skip redirect and always stream so we control Content-Disposition
-    from src.core.services.dispute_document_service import GCS_PREFIX
+    disposition = "inline" if mode == "view" else "attachment"
 
-    if doc.file_path.startswith(GCS_PREFIX) and mode == "save":
-        try:
-            from src.core.services.gcs_service import get_signed_url
-
-            gcs_path = doc.file_path.removeprefix(GCS_PREFIX)
-            url = get_signed_url(gcs_path, expiry_minutes=30)
-            return RedirectResponse(url=url, status_code=302)
-        except Exception:
-            pass  # Fall through to byte streaming
-
-    # Stream bytes — works for both local and GCS (fallback)
     try:
         data, filename = await doc_service.get_file_bytes(doc)
         return StreamingResponse(
@@ -528,7 +498,7 @@ async def download_dispute_document(
             },
         )
     except Exception as exc:
-        raise HTTPException(status_code=404, detail=str(exc))  # noqa: B904
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.delete("/{dispute_id}/documents/{document_id}", response_model=SuccessResponse)  # type: ignore[untyped-decorator]
@@ -575,14 +545,6 @@ async def get_dispute_ar_documents(
     return await ar_svc.get_ar_documents_for_dispute(dispute_id)
 
 
-from pydantic import BaseModel as _BM2  # noqa: E402, N814
-
-
-class AnchorUpdateRequest(_BM2):
-    doc_id: int
-    customer_email: str | None = None  # scope override; defaults to dispute.customer_id
-
-
 @router.put("/{dispute_id}/ar-documents/anchor")  # type: ignore[untyped-decorator]
 async def update_dispute_ar_anchor(
     dispute_id: int,
@@ -626,26 +588,6 @@ async def update_dispute_ar_anchor(
         return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))  # noqa: B904
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Fork Recommendations  (AI-suggested case splits — FA decides)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-from pydantic import (  # noqa: E402
-    BaseModel as _BaseModel,  # local alias avoids conflict with schemas  # noqa: E402
-)
-
-
-class ForkRecommendationAction(_BaseModel):
-    action: str  # "ACCEPT" | "DISMISS"
-    dispute_type_id: int | None = None
-    custom_type_name: str | None = None
-    custom_type_desc: str | None = None
-    description: str | None = None
-    priority: str = "MEDIUM"
-    customer_email: str | None = None
-    ar_document_id: int | None = None
 
 
 @router.get("/{dispute_id}/fork-recommendations")  # type: ignore[untyped-decorator]

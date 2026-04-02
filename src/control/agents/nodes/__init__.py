@@ -6,6 +6,8 @@ Re-exports all node functions so graph.py can do a single clean import.
 from .classify_email import node_classify_email  # noqa: F401
 from .detect_context_shift import node_detect_context_shift  # noqa: F401
 from .embed_and_search import node_embed_and_search  # noqa: F401
+from .enhanced_verify import node_enhanced_verify  # noqa: F401
+from .execute_tools import node_execute_tools  # noqa: F401
 from .extract_invoice import node_extract_invoice_data_via_groq  # noqa: F401
 from .extract_text import node_extract_text  # noqa: F401
 from .fetch_context import node_fetch_context  # noqa: F401
@@ -15,3 +17,4 @@ from .persist_results import node_persist_results  # noqa: F401
 from .pre_fetch_dispute_context import node_pre_fetch_dispute_context  # noqa: F401
 from .resolve_dispute_link import node_resolve_dispute_link  # noqa: F401
 from .resolve_token import node_resolve_token  # noqa: F401
+from .verify_claim import node_verify_claim  # noqa: F401

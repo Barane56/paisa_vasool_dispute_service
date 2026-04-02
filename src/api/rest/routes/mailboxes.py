@@ -45,7 +45,7 @@ from src.core.exceptions.errors import ValidationError as PVValidationError
 from src.core.services.mailbox_service import MailboxService
 from src.core.services.outbound_email_service import OutboundEmailService
 from src.data.clients.postgres import get_db
-from src.observability.logging import logger  # type: ignore
+from src.observability import logger  # type: ignore
 from src.schemas.common_schemas import SuccessResponse
 from src.schemas.mailbox_schemas import (
     InboxMessageResponse,

@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 
 from src.control.agents.state import EmailProcessingState
 from src.control.prompts import build_generate_response_prompt
@@ -189,6 +190,22 @@ async def _call_llm_for_issue(
             f"[email_id={email_id}] issue[{issue_index}] "
             f"auto_respond={can_auto} | {data.get('auto_respond_reason', '')}"
         )
+
+        # Parse tool proposals from LLM response
+        tool_proposals = []
+        raw_proposals = data.get("tool_proposals") or []
+        for tp in raw_proposals:
+            if isinstance(tp, dict):
+                tool_proposals.append(
+                    {
+                        "name": tp.get("name", ""),
+                        "args": tp.get("args", {}),
+                        "preconditions": tp.get("preconditions", ""),
+                        "idempotency_key": tp.get("idempotency_key")
+                        or f"idem-{uuid.uuid4()}",
+                    }
+                )
+
         return {
             "issue_index": issue_index,
             "classification": classification,
@@ -210,6 +227,12 @@ async def _call_llm_for_issue(
                 for x in (data.get("answers_pending_questions") or [])
                 if str(x).lstrip("-").isdigit()
             ],
+            "claim_type": data.get("claim_type", "OTHER"),
+            "verification_status": data.get("verification_status", "INCONCLUSIVE"),
+            "verification_evidence": data.get("verification_evidence", ""),
+            "resolution_action": data.get("resolution_action") or "",
+            "tool_proposals": tool_proposals,
+            "cited_policy_claims": data.get("cited_claims", []),
         }
 
     except Exception as err:
@@ -241,6 +264,10 @@ async def _call_llm_for_issue(
             "memory_context_used": False,
             "episodes_referenced": [],
             "_answers_pending_questions": [],
+            "claim_type": "OTHER",
+            "verification_status": "INCONCLUSIVE",
+            "verification_evidence": "LLM error - no verification performed",
+            "resolution_action": "INVESTIGATE_PAYMENT",
         }
 
 
@@ -282,6 +309,10 @@ async def node_generate_ai_response(
             "memory_context_used": False,
             "episodes_referenced": [],
             "per_issue_responses": [],
+            "claim_type": "",
+            "verification_status": "",
+            "verification_evidence": "",
+            "resolution_action": "",
         }
 
     inline_issues = state.get("inline_issues") or []
@@ -314,6 +345,10 @@ async def node_generate_ai_response(
             "memory_context_used": False,
             "episodes_referenced": [],
             "per_issue_responses": [],
+            "claim_type": "",
+            "verification_status": "",
+            "verification_evidence": "",
+            "resolution_action": "",
         }
 
     existing_dispute_id = state.get("existing_dispute_id")
@@ -366,6 +401,10 @@ async def node_generate_ai_response(
                     "dispute_token": "{DISPUTE_TOKEN}",
                 }
             ],
+            "claim_type": "OTHER",
+            "verification_status": "INCONCLUSIVE",
+            "verification_evidence": "Fast path - no verification",
+            "resolution_action": "",
         }
 
     # ── Single-issue path ─────────────────────────────────────────────────────
@@ -410,6 +449,10 @@ async def node_generate_ai_response(
             "episodes_referenced": result["episodes_referenced"],
             "_answers_pending_questions": result["_answers_pending_questions"],
             "per_issue_responses": [],
+            "claim_type": result.get("claim_type", "OTHER"),
+            "verification_status": result.get("verification_status", "INCONCLUSIVE"),
+            "verification_evidence": result.get("verification_evidence", ""),
+            "resolution_action": result.get("resolution_action") or "",
         }
 
     # ── Multi-issue path: one LLM call per issue ──────────────────────────────
@@ -606,4 +649,9 @@ async def node_generate_ai_response(
         "_answers_pending_questions": primary.get("_answers_pending_questions", []),
         # Full per-issue list — consumed by persist_results
         "per_issue_responses": per_issue_responses,
+        # Verification fields
+        "claim_type": primary.get("claim_type", "OTHER"),
+        "verification_status": primary.get("verification_status", "INCONCLUSIVE"),
+        "verification_evidence": primary.get("verification_evidence", ""),
+        "resolution_action": primary.get("resolution_action") or "",
     }
